@@ -27,6 +27,21 @@ class Settings(BaseSettings):
     BYBIT_LEVERAGE: int = 2
     CONFLUENCE_MIN_SCORE: int = 65
 
+    # Phase 4: Cloud Forex (OANDA Practice / Deriv Demo) & Session/News Guard
+    FOREX_PROVIDER: str = "paper"  # paper | deriv | oanda
+    FOREX_SYMBOLS: str = "EUR_USD,GBP_USD,XAU_USD"
+    FOREX_PRIMARY_INTERVAL: str = "15m"
+    FOREX_HTF_INTERVAL: str = "4h"
+    FOREX_KILLZONE_ONLY: bool = True
+    NEWS_BLACKOUT_MINUTES: int = 30
+    OANDA_API_KEY: str = ""
+    OANDA_ACCOUNT_ID: str = ""
+    OANDA_BASE_URL: str = "https://api-fxpractice.oanda.com/v3"
+    DERIV_API_TOKEN: str = ""
+    DERIV_APP_ID: str = "1089"
+    DERIV_ACCOUNT_ID: str = ""
+    DERIV_AUTH_MODE: str = "auto"  # auto | otp | legacy
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -84,11 +99,59 @@ class Settings(BaseSettings):
             raise ValueError(f"CONFLUENCE_MIN_SCORE must be between 0 and 100, got {value}.")
         return value
 
+    @field_validator("FOREX_PROVIDER")
+    @classmethod
+    def validate_forex_provider(cls, value: str) -> str:
+        """Validate Forex provider is one of paper, deriv, or oanda."""
+        cleaned = (value or "paper").strip().lower()
+        if cleaned not in {"paper", "deriv", "oanda"}:
+            raise ValueError(
+                f"FOREX_PROVIDER='{value}' must be 'paper', 'deriv', or 'oanda'."
+            )
+        return cleaned
+
+    @field_validator("DERIV_AUTH_MODE")
+    @classmethod
+    def validate_deriv_auth_mode(cls, value: str) -> str:
+        """Validate Deriv auth mode is one of auto, otp, or legacy."""
+        cleaned = (value or "auto").strip().lower()
+        if cleaned not in {"auto", "otp", "legacy"}:
+            raise ValueError(
+                f"DERIV_AUTH_MODE='{value}' must be 'auto', 'otp', or 'legacy'."
+            )
+        return cleaned
+
+    @field_validator("OANDA_BASE_URL")
+    @classmethod
+    def validate_oanda_base_url(cls, value: str) -> str:
+        """Restrict OANDA strictly to Practice/Demo URL in Phase 4."""
+        cleaned = (value or "https://api-fxpractice.oanda.com/v3").strip().rstrip("/")
+        if cleaned != "https://api-fxpractice.oanda.com/v3":
+            raise ValueError(
+                "OANDA_BASE_URL is restricted strictly to Practice/Demo "
+                "'https://api-fxpractice.oanda.com/v3' in Phase 4."
+            )
+        return cleaned
+
+    @field_validator("NEWS_BLACKOUT_MINUTES")
+    @classmethod
+    def validate_news_blackout_minutes(cls, value: int) -> int:
+        """Ensure news blackout window is non-negative."""
+        if value < 0 or value > 240:
+            raise ValueError(f"NEWS_BLACKOUT_MINUTES must be between 0 and 240, got {value}.")
+        return value
+
     @model_validator(mode="after")
     def enforce_keyless_paper_fallback(self) -> "Settings":
-        """Safety Lock: Default BYBIT_MODE=paper if BYBIT_API_KEY is blank."""
+        """Safety Lock: Default BYBIT_MODE=paper and FOREX_PROVIDER=paper if credentials are blank."""
         if not (self.BYBIT_API_KEY or "").strip():
             object.__setattr__(self, "BYBIT_MODE", "paper")
+        if self.FOREX_PROVIDER == "oanda":
+            if not (self.OANDA_API_KEY or "").strip() or not (self.OANDA_ACCOUNT_ID or "").strip():
+                object.__setattr__(self, "FOREX_PROVIDER", "paper")
+        elif self.FOREX_PROVIDER == "deriv":
+            if not (self.DERIV_API_TOKEN or "").strip():
+                object.__setattr__(self, "FOREX_PROVIDER", "paper")
         return self
 
 

@@ -10,6 +10,9 @@ from sqlalchemy.orm import Session
 
 from app.brokers.bybit_broker import BybitBrokerError
 from app.brokers.bybit_router import BybitRouter
+from app.brokers.forex_deriv import DerivBrokerError
+from app.brokers.forex_oanda import OandaBrokerError
+from app.brokers.forex_router import ForexRouter
 from app.brokers.paper_sim import (
     INITIAL_BYBIT_BALANCE,
     INITIAL_FOREX_BALANCE,
@@ -20,6 +23,7 @@ from app.config import settings
 from app.database import SessionLocal
 from app.engine.confluence import ConfluenceFilter
 from app.engine.risk_manager import RiskManager
+from app.engine.session_guard import SessionGuard
 from app.engine.strategies import StrategyDispatcher
 from app.models import BotState, StrategyConfig, SystemLog, Trade
 
@@ -35,11 +39,17 @@ class BotRunner:
         dispatcher: Optional[StrategyDispatcher] = None,
         risk_manager: Optional[RiskManager] = None,
         bybit_router: Optional[BybitRouter] = None,
+        forex_router: Optional[ForexRouter] = None,
         confluence_filter: Optional[ConfluenceFilter] = None,
+        session_guard: Optional[SessionGuard] = None,
     ) -> None:
         self._session_factory = session_factory
         self.broker = broker or PaperSimBroker(session_factory=session_factory)
         self.bybit_router = bybit_router or BybitRouter(
+            paper_broker=self.broker,
+            session_factory=session_factory,
+        )
+        self.forex_router = forex_router or ForexRouter(
             paper_broker=self.broker,
             session_factory=session_factory,
         )
@@ -50,6 +60,7 @@ class BotRunner:
             max_daily_loss_pct=settings.MAX_DAILY_LOSS_PCT,
         )
         self.confluence_filter = confluence_filter or ConfluenceFilter()
+        self.session_guard = session_guard or SessionGuard()
         self._task: Optional[asyncio.Task[None]] = None
         self._stop_event = asyncio.Event()
         self._initial_risks: dict[int, float] = {}
@@ -64,6 +75,13 @@ class BotRunner:
             "passed": False,
             "reasons": ["Awaiting first signal"],
         }
+        self.last_forex_session: dict[str, object] = self.session_guard.evaluate("EUR_USD").to_dict()
+
+    def get_forex_session_status(self, symbol: str = "EUR_USD") -> dict[str, object]:
+        """Evaluate and return current Forex session/news guard status."""
+        status = self.session_guard.evaluate(symbol).to_dict()
+        self.last_forex_session = status
+        return status
 
     @staticmethod
     def _utcnow() -> datetime:
@@ -224,6 +242,14 @@ class BotRunner:
                     except BybitBrokerError as exc:
                         db.add(SystemLog(level="WARN", source="BybitBroker", message=f"{symbol} feed fallback: {exc}"))
                         df = self.broker.get_ohlcv(symbol, interval="15m", limit=250)
+                elif spec["market"] == "FOREX" and self.forex_router.is_cloud_active():
+                    try:
+                        fx_broker = self.forex_router.get_broker()
+                        df = fx_broker.get_ohlcv(symbol, interval=settings.FOREX_PRIMARY_INTERVAL, limit=250)
+                        htf_df = fx_broker.get_ohlcv(symbol, interval=settings.FOREX_HTF_INTERVAL, limit=100)
+                    except (OandaBrokerError, DerivBrokerError) as exc:
+                        db.add(SystemLog(level="WARN", source="ForexBroker", message=f"{symbol} feed fallback: {exc}"))
+                        df = self.broker.get_ohlcv(symbol, interval="15m", limit=250)
                 else:
                     df = self.broker.get_ohlcv(symbol, interval="15m", limit=250)
 
@@ -236,6 +262,19 @@ class BotRunner:
 
                 if signal.action not in {"BUY", "SELL"}:
                     continue
+
+                if spec["market"] == "FOREX":
+                    sess = self.session_guard.evaluate(symbol)
+                    self.last_forex_session = sess.to_dict()
+                    if not sess.can_trade:
+                        db.add(
+                            SystemLog(
+                                level="INFO",
+                                source="SessionGuard",
+                                message=f"{symbol} {signal.action} paused ({sess.session_name}): {sess.reason}",
+                            )
+                        )
+                        continue
 
                 conf_result = self.confluence_filter.evaluate(signal, df, htf_df=htf_df)
                 self.last_confluence = {
@@ -305,6 +344,20 @@ class BotRunner:
                             )
                         except BybitBrokerError as exc:
                             db.add(SystemLog(level="ERROR", source="BybitBroker", message=f"Order rejected: {exc}"))
+                            continue
+                    elif spec["market"] == "FOREX" and self.forex_router.is_cloud_active():
+                        try:
+                            self.forex_router.get_broker().place_order(
+                                symbol=symbol,
+                                side=order_side,
+                                qty=round(decision.qty, 6),
+                                stop_loss=round(signal.stop_loss, decimals),
+                                take_profit=round(signal.take_profit, decimals),
+                                strategy_name=signal.strategy_name,
+                                reason=f"{signal.reason} [Confluence {conf_result.score}/100]",
+                            )
+                        except (OandaBrokerError, DerivBrokerError) as exc:
+                            db.add(SystemLog(level="ERROR", source="ForexBroker", message=f"Order rejected: {exc}"))
                             continue
 
                     created = self.broker.place_order(

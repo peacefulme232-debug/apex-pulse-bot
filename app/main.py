@@ -16,6 +16,7 @@ from app.brokers.paper_sim import INITIAL_BYBIT_BALANCE, INITIAL_FOREX_BALANCE, 
 from app.config import settings
 from app.database import SessionLocal, create_db_engine, get_db, init_db
 from app.engine.runner import BotRunner
+from app.engine.summarizer import BotSummarizer
 from app.models import BotState, EquitySnapshot, StrategyConfig, SystemLog, Trade
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
@@ -55,6 +56,7 @@ def create_app(database_url: Optional[str] = None) -> FastAPI:
 
     broker = PaperSimBroker(session_factory=session_factory)
     bot_runner = BotRunner(broker=broker, session_factory=session_factory)
+    summarizer = BotSummarizer()
 
     def _get_scoped_db():
         db = session_factory()
@@ -78,8 +80,8 @@ def create_app(database_url: Optional[str] = None) -> FastAPI:
 
     fastapi_app = FastAPI(
         title="APEX-PULSE",
-        description="24/7 Cloud-Ready Multi-Market Algorithmic Trading Bot (Phase 1)",
-        version="0.1.0",
+        description="24/7 Cloud-Ready Multi-Market Algorithmic Trading Bot (Phase 4)",
+        version="0.4.0",
         lifespan=lifespan,
     )
 
@@ -92,15 +94,13 @@ def create_app(database_url: Optional[str] = None) -> FastAPI:
         return HTMLResponse(content=index_path.read_text(encoding="utf-8"))
 
     def _build_brokers_status() -> dict[str, Any]:
+        forex_symbols = [s.strip() for s in settings.FOREX_SYMBOLS.split(",") if s.strip()]
+        primary_fx = forex_symbols[0] if forex_symbols else "EUR_USD"
+        forex_session = bot_runner.get_forex_session_status(primary_fx)
         return {
             "bybit": bot_runner.bybit_router.get_status(),
-            "forex": {
-                "status": "PAPER_FALLBACK",
-                "mode": "paper",
-                "provider": "OANDA (Phase 4)",
-                "symbols": ["EUR_USD", "XAU_USD"],
-                "last_sync_message": "Paper simulation active (Phase 4 ready)",
-            },
+            "forex": bot_runner.forex_router.get_status(),
+            "forex_session": forex_session,
         }
 
     def _compute_strategy_metrics(db: Session, strat: StrategyConfig) -> tuple[float, float]:
@@ -147,8 +147,26 @@ def create_app(database_url: Optional[str] = None) -> FastAPI:
 
     @fastapi_app.get("/api/brokers/status")
     def get_brokers_status() -> dict[str, Any]:
-        """Return live connection health for Bybit and Forex brokers."""
+        """Return live connection health for Bybit, Forex brokers, and Forex session/news guard."""
         return _build_brokers_status()
+
+    @fastapi_app.get("/api/summary")
+    def get_summary(
+        market: Literal["ALL", "BYBIT", "FOREX"] = Query(default="ALL"),
+        db: Session = Depends(db_dependency),
+    ) -> dict[str, Any]:
+        """Return plain-English bot accuracy, edge math, strategy rankings, and risk shield audit."""
+        _ensure_bot_state(db, broker)
+        balances = broker.get_balance(db=db)
+        forex_symbols = [s.strip() for s in settings.FOREX_SYMBOLS.split(",") if s.strip()]
+        primary_fx = forex_symbols[0] if forex_symbols else "EUR_USD"
+        forex_session = bot_runner.get_forex_session_status(primary_fx)
+        return summarizer.build_summary(
+            db=db,
+            market=market,
+            balances=balances,
+            forex_session=forex_session,
+        )
 
     @fastapi_app.get("/api/dashboard")
     def get_dashboard(
