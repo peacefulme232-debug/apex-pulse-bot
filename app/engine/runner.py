@@ -8,6 +8,8 @@ from typing import Callable, Optional
 
 from sqlalchemy.orm import Session
 
+from app.brokers.bybit_broker import BybitBrokerError
+from app.brokers.bybit_router import BybitRouter
 from app.brokers.paper_sim import (
     INITIAL_BYBIT_BALANCE,
     INITIAL_FOREX_BALANCE,
@@ -16,6 +18,7 @@ from app.brokers.paper_sim import (
 )
 from app.config import settings
 from app.database import SessionLocal
+from app.engine.confluence import ConfluenceFilter
 from app.engine.risk_manager import RiskManager
 from app.engine.strategies import StrategyDispatcher
 from app.models import BotState, StrategyConfig, SystemLog, Trade
@@ -31,20 +34,36 @@ class BotRunner:
         interval_seconds: Optional[int] = None,
         dispatcher: Optional[StrategyDispatcher] = None,
         risk_manager: Optional[RiskManager] = None,
+        bybit_router: Optional[BybitRouter] = None,
+        confluence_filter: Optional[ConfluenceFilter] = None,
     ) -> None:
         self._session_factory = session_factory
         self.broker = broker or PaperSimBroker(session_factory=session_factory)
+        self.bybit_router = bybit_router or BybitRouter(
+            paper_broker=self.broker,
+            session_factory=session_factory,
+        )
         self.interval_seconds = interval_seconds or settings.LOOP_INTERVAL_SECONDS
         self.dispatcher = dispatcher or StrategyDispatcher()
         self.risk_manager = risk_manager or RiskManager(
             max_risk_per_trade_pct=settings.MAX_RISK_PER_TRADE_PCT,
             max_daily_loss_pct=settings.MAX_DAILY_LOSS_PCT,
         )
+        self.confluence_filter = confluence_filter or ConfluenceFilter()
         self._task: Optional[asyncio.Task[None]] = None
         self._stop_event = asyncio.Event()
         self._initial_risks: dict[int, float] = {}
         self._tick_count: int = 0
         self._last_loss_tick: dict[str, int] = {}
+        self.last_confluence: dict[str, object] = {
+            "symbol": "BTCUSDT",
+            "score": 0,
+            "htf_bias": "UNAVAILABLE",
+            "vwap_aligned": False,
+            "volume_ratio": 1.0,
+            "passed": False,
+            "reasons": ["Awaiting first signal"],
+        }
 
     @staticmethod
     def _utcnow() -> datetime:
@@ -120,6 +139,11 @@ class BotRunner:
             rounded_sl = round(new_sl, decimals)
             if rounded_sl != round(float(trade.stop_loss), decimals):
                 trade.stop_loss = rounded_sl
+                if trade.market == "BYBIT" and self.bybit_router.is_demo_active():
+                    try:
+                        self.bybit_router.get_broker().update_stop_loss(trade.symbol, rounded_sl)
+                    except BybitBrokerError as exc:
+                        db.add(SystemLog(level="WARN", source="BybitBroker", message=f"Trailing SL sync skipped: {exc}"))
                 db.add(
                     SystemLog(
                         level="INFO",
@@ -191,7 +215,18 @@ class BotRunner:
             }
 
             for symbol, spec in SYMBOL_SPECS.items():
-                df = self.broker.get_ohlcv(symbol, interval="15m", limit=250)
+                htf_df = None
+                if spec["market"] == "BYBIT" and self.bybit_router.is_demo_active():
+                    try:
+                        bybit_broker = self.bybit_router.get_broker()
+                        df = bybit_broker.get_ohlcv(symbol, interval=settings.BYBIT_PRIMARY_INTERVAL, limit=250)
+                        htf_df = bybit_broker.get_ohlcv(symbol, interval=settings.BYBIT_HTF_INTERVAL, limit=100)
+                    except BybitBrokerError as exc:
+                        db.add(SystemLog(level="WARN", source="BybitBroker", message=f"{symbol} feed fallback: {exc}"))
+                        df = self.broker.get_ohlcv(symbol, interval="15m", limit=250)
+                else:
+                    df = self.broker.get_ohlcv(symbol, interval="15m", limit=250)
+
                 regime_result, signal = self.dispatcher.evaluate(df, enabled_strategies)
 
                 if symbol == "BTCUSDT":
@@ -200,6 +235,30 @@ class BotRunner:
                     state.active_regime_forex = regime_result.regime.value
 
                 if signal.action not in {"BUY", "SELL"}:
+                    continue
+
+                conf_result = self.confluence_filter.evaluate(signal, df, htf_df=htf_df)
+                self.last_confluence = {
+                    "symbol": symbol,
+                    "score": conf_result.score,
+                    "htf_bias": conf_result.htf_bias,
+                    "vwap_aligned": conf_result.vwap_aligned,
+                    "volume_ratio": conf_result.volume_ratio,
+                    "passed": conf_result.passed,
+                    "reasons": conf_result.reasons,
+                }
+                db.add(
+                    SystemLog(
+                        level="INFO",
+                        source="ConfluenceFilter",
+                        message=(
+                            f"{symbol} {signal.action} Confluence {conf_result.score}/100 "
+                            f"({'PASSED' if conf_result.passed else 'BLOCKED'}): "
+                            f"{' | '.join(conf_result.reasons)}"
+                        ),
+                    )
+                )
+                if not conf_result.passed:
                     continue
 
                 open_positions = self.broker.get_open_positions(db=db)
@@ -232,6 +291,22 @@ class BotRunner:
                 if decision.approved:
                     decimals = int(spec["decimals"])
                     order_side = "LONG" if signal.action == "BUY" else "SHORT"
+                    if spec["market"] == "BYBIT" and self.bybit_router.is_demo_active():
+                        try:
+                            self.bybit_router.get_broker().place_order(
+                                symbol=symbol,
+                                side=order_side,
+                                qty=round(decision.qty, 6),
+                                stop_loss=round(signal.stop_loss, decimals),
+                                take_profit=round(signal.take_profit, decimals),
+                                strategy_name=signal.strategy_name,
+                                reason=f"{signal.reason} [Confluence {conf_result.score}/100]",
+                                entry_price_ref=signal.entry_price,
+                            )
+                        except BybitBrokerError as exc:
+                            db.add(SystemLog(level="ERROR", source="BybitBroker", message=f"Order rejected: {exc}"))
+                            continue
+
                     created = self.broker.place_order(
                         symbol=symbol,
                         side=order_side,
@@ -239,7 +314,7 @@ class BotRunner:
                         stop_loss=round(signal.stop_loss, decimals),
                         take_profit=round(signal.take_profit, decimals),
                         strategy_name=signal.strategy_name,
-                        reason=signal.reason,
+                        reason=f"{signal.reason} [Confluence {conf_result.score}/100]",
                         db=db,
                     )
                     self._initial_risks[created["id"]] = abs(

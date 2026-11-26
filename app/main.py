@@ -91,6 +91,50 @@ def create_app(database_url: Optional[str] = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Dashboard template not found")
         return HTMLResponse(content=index_path.read_text(encoding="utf-8"))
 
+    def _build_brokers_status() -> dict[str, Any]:
+        return {
+            "bybit": bot_runner.bybit_router.get_status(),
+            "forex": {
+                "status": "PAPER_FALLBACK",
+                "mode": "paper",
+                "provider": "OANDA (Phase 4)",
+                "symbols": ["EUR_USD", "XAU_USD"],
+                "last_sync_message": "Paper simulation active (Phase 4 ready)",
+            },
+        }
+
+    def _compute_strategy_metrics(db: Session, strat: StrategyConfig) -> tuple[float, float]:
+        closed_trades = (
+            db.query(Trade)
+            .filter(Trade.status == "CLOSED", Trade.strategy_name == strat.name)
+            .order_by(Trade.closed_at.asc())
+            .all()
+        )
+        if not closed_trades:
+            pf = round(1.0 + (strat.win_rate / 100.0), 2) if strat.net_pnl_usd > 0 else 0.0
+            return pf, 0.0
+
+        gross_profit = sum(float(t.pnl_usd) for t in closed_trades if float(t.pnl_usd) > 0)
+        gross_loss = abs(sum(float(t.pnl_usd) for t in closed_trades if float(t.pnl_usd) < 0))
+        if gross_loss > 0:
+            pf = round(gross_profit / gross_loss, 2)
+        elif gross_profit > 0:
+            pf = round(gross_profit, 2)
+        else:
+            pf = 0.0
+
+        equity = INITIAL_BYBIT_BALANCE
+        peak = equity
+        max_dd = 0.0
+        for t in closed_trades:
+            equity += float(t.pnl_usd)
+            if equity > peak:
+                peak = equity
+            dd = ((peak - equity) / peak) * 100.0 if peak > 0 else 0.0
+            if dd > max_dd:
+                max_dd = dd
+        return pf, round(max_dd, 2)
+
     @fastapi_app.get("/health")
     def health_check(db: Session = Depends(db_dependency)) -> dict[str, Any]:
         """Return service health, active trading mode, and kill switch status."""
@@ -100,6 +144,11 @@ def create_app(database_url: Optional[str] = None) -> FastAPI:
             "mode": settings.TRADING_MODE,
             "kill_switch": bool(state.kill_switch_active),
         }
+
+    @fastapi_app.get("/api/brokers/status")
+    def get_brokers_status() -> dict[str, Any]:
+        """Return live connection health for Bybit and Forex brokers."""
+        return _build_brokers_status()
 
     @fastapi_app.get("/api/dashboard")
     def get_dashboard(
@@ -172,9 +221,30 @@ def create_app(database_url: Optional[str] = None) -> FastAPI:
         strategies = db.query(StrategyConfig).order_by(StrategyConfig.id.asc()).all()
         logs = db.query(SystemLog).order_by(SystemLog.id.desc()).limit(50).all()
 
+        strategy_payload = []
+        for s in strategies:
+            pf, max_dd = _compute_strategy_metrics(db, s)
+            strategy_payload.append(
+                {
+                    "id": s.id,
+                    "name": s.name,
+                    "display_name": s.display_name,
+                    "description": s.description,
+                    "target_regime": s.target_regime,
+                    "enabled": s.enabled,
+                    "total_trades": s.total_trades,
+                    "win_rate": round(s.win_rate, 1),
+                    "net_pnl_usd": round(s.net_pnl_usd, 2),
+                    "profit_factor": pf,
+                    "max_drawdown_pct": max_dd,
+                }
+            )
+
         return {
             "market": market,
             "trading_mode": state.trading_mode,
+            "brokers_status": _build_brokers_status(),
+            "last_confluence": bot_runner.last_confluence,
             "bot_state": {
                 "is_running": state.is_running,
                 "kill_switch_active": state.kill_switch_active,
@@ -195,20 +265,7 @@ def create_app(database_url: Optional[str] = None) -> FastAPI:
                 "max_daily_loss_pct": settings.MAX_DAILY_LOSS_PCT,
             },
             "equity_curve": equity_curve,
-            "strategies": [
-                {
-                    "id": s.id,
-                    "name": s.name,
-                    "display_name": s.display_name,
-                    "description": s.description,
-                    "target_regime": s.target_regime,
-                    "enabled": s.enabled,
-                    "total_trades": s.total_trades,
-                    "win_rate": round(s.win_rate, 1),
-                    "net_pnl_usd": round(s.net_pnl_usd, 2),
-                }
-                for s in strategies
-            ],
+            "strategies": strategy_payload,
             "open_positions": [broker._trade_to_dict(t) for t in open_positions],
             "closed_trades": [broker._trade_to_dict(t) for t in closed_trades],
             "system_logs": [

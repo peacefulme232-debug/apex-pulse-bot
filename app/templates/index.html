@@ -72,6 +72,18 @@
             <span class="h-1.5 w-1.5 rounded-full bg-amber-400 animate-ping"></span>
             <span id="mode-pill-text">PAPER / DEMO MODE</span>
           </span>
+
+          <!-- Broker Connection Status Pills -->
+          <div class="hidden sm:flex items-center gap-1.5">
+            <span id="pill-bybit" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-mono font-semibold bg-zinc-900 text-zinc-300 border border-zinc-700/80">
+              <span id="pill-bybit-dot" class="h-1.5 w-1.5 rounded-full bg-amber-400"></span>
+              <span id="pill-bybit-text">BYBIT: PAPER</span>
+            </span>
+            <span id="pill-forex" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-mono font-semibold bg-zinc-900 text-zinc-300 border border-zinc-700/80">
+              <span id="pill-forex-dot" class="h-1.5 w-1.5 rounded-full bg-amber-400"></span>
+              <span id="pill-forex-text">FOREX: PAPER</span>
+            </span>
+          </div>
         </div>
 
         <!-- Kill Switch / Resume Controls -->
@@ -162,6 +174,35 @@
       </div>
       <div class="h-56 sm:h-64 w-full">
         <canvas id="equityChart"></canvas>
+      </div>
+    </section>
+
+    <!-- Institutional Confluence Radar -->
+    <section class="mt-4 glass-card rounded-2xl p-4">
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <div class="flex items-center gap-2">
+          <span class="h-2 w-2 rounded-full bg-emerald-400"></span>
+          <h2 class="text-sm font-semibold text-white">Institutional Confluence Radar</h2>
+          <span id="conf-symbol" class="text-[10px] font-mono px-2 py-0.5 rounded bg-zinc-800 text-zinc-300">BTCUSDT</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="text-[11px] font-mono text-zinc-400">SNIPER SCORE</span>
+          <span id="conf-score" class="text-sm font-bold font-mono px-2.5 py-0.5 rounded-lg bg-zinc-800 text-zinc-200 border border-zinc-700/70">0 / 100</span>
+        </div>
+      </div>
+      <div class="grid grid-cols-3 gap-2.5">
+        <div class="rounded-xl bg-zinc-900/70 border border-zinc-800/80 p-2.5">
+          <p class="text-[10px] font-mono uppercase text-zinc-400">4H Macro Bias</p>
+          <p id="conf-htf" class="mt-1 text-xs sm:text-sm font-bold font-mono text-zinc-200">UNAVAILABLE</p>
+        </div>
+        <div class="rounded-xl bg-zinc-900/70 border border-zinc-800/80 p-2.5">
+          <p class="text-[10px] font-mono uppercase text-zinc-400">VWAP Alignment</p>
+          <p id="conf-vwap" class="mt-1 text-xs sm:text-sm font-bold font-mono text-zinc-200">NEUTRAL</p>
+        </div>
+        <div class="rounded-xl bg-zinc-900/70 border border-zinc-800/80 p-2.5">
+          <p class="text-[10px] font-mono uppercase text-zinc-400">Volume Surge</p>
+          <p id="conf-vol" class="mt-1 text-xs sm:text-sm font-bold font-mono text-zinc-200">1.00x</p>
+        </div>
       </div>
     </section>
 
@@ -371,9 +412,15 @@
               </div>
               <p class="mt-2 text-[11px] text-zinc-400 leading-snug">${s.description}</p>
             </div>
-            <div class="mt-3 pt-2.5 border-t border-zinc-800/80 flex items-center justify-between text-xs font-mono">
-              <span class="${pnlColor} font-semibold">${fmtSignedUsd(s.net_pnl_usd)}</span>
-              <span class="text-zinc-400">WR ${s.win_rate.toFixed(1)}% · ${s.total_trades}t</span>
+            <div class="mt-3 pt-2.5 border-t border-zinc-800/80 space-y-1 text-xs font-mono">
+              <div class="flex items-center justify-between">
+                <span class="${pnlColor} font-semibold">${fmtSignedUsd(s.net_pnl_usd)}</span>
+                <span class="text-zinc-400">WR ${s.win_rate.toFixed(1)}% · ${s.total_trades}t</span>
+              </div>
+              <div class="flex items-center justify-between text-[11px] text-zinc-400">
+                <span>PF <span class="text-zinc-200">${Number(s.profit_factor ?? 0).toFixed(2)}</span></span>
+                <span>Max DD <span class="text-rose-300">${Number(s.max_drawdown_pct ?? 0).toFixed(2)}%</span></span>
+              </div>
             </div>
           </div>
         `;
@@ -496,6 +543,60 @@
       renderStrategies(data.strategies);
       renderTrades(data.open_positions, data.closed_trades);
       renderLogs(data.system_logs);
+
+      if (data.brokers_status) {
+        const bybit = data.brokers_status.bybit || {};
+        const forex = data.brokers_status.forex || {};
+        const bybitDot = document.getElementById('pill-bybit-dot');
+        const bybitText = document.getElementById('pill-bybit-text');
+        if (bybit.status === 'CONNECTED_DEMO') {
+          bybitDot.className = 'h-1.5 w-1.5 rounded-full bg-emerald-400';
+          bybitText.textContent = 'BYBIT: DEMO';
+        } else if (bybit.status === 'GEO_BLOCKED' || bybit.status === 'ERROR') {
+          bybitDot.className = 'h-1.5 w-1.5 rounded-full bg-rose-500';
+          bybitText.textContent = `BYBIT: ${bybit.status}`;
+        } else {
+          bybitDot.className = 'h-1.5 w-1.5 rounded-full bg-amber-400';
+          bybitText.textContent = 'BYBIT: PAPER';
+        }
+
+        const forexText = document.getElementById('pill-forex-text');
+        if (forexText && forex.mode) {
+          forexText.textContent = `FOREX: ${String(forex.mode).toUpperCase()}`;
+        }
+      }
+
+      if (data.last_confluence) {
+        const lc = data.last_confluence;
+        document.getElementById('conf-symbol').textContent = lc.symbol || 'BTCUSDT';
+        const score = Number(lc.score || 0);
+        const scoreEl = document.getElementById('conf-score');
+        scoreEl.textContent = `${score} / 100`;
+        scoreEl.className = score >= 65
+          ? 'text-sm font-bold font-mono px-2.5 py-0.5 rounded-lg bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
+          : 'text-sm font-bold font-mono px-2.5 py-0.5 rounded-lg bg-zinc-800 text-zinc-200 border border-zinc-700/70';
+
+        const htfEl = document.getElementById('conf-htf');
+        htfEl.textContent = lc.htf_bias || 'UNAVAILABLE';
+        htfEl.className = lc.htf_bias === 'BULLISH'
+          ? 'mt-1 text-xs sm:text-sm font-bold font-mono text-emerald-400'
+          : lc.htf_bias === 'BEARISH'
+            ? 'mt-1 text-xs sm:text-sm font-bold font-mono text-rose-400'
+            : 'mt-1 text-xs sm:text-sm font-bold font-mono text-zinc-300';
+
+        const vwapEl = document.getElementById('conf-vwap');
+        vwapEl.textContent = lc.vwap_aligned ? 'ALIGNED' : 'UNALIGNED';
+        vwapEl.className = lc.vwap_aligned
+          ? 'mt-1 text-xs sm:text-sm font-bold font-mono text-emerald-400'
+          : 'mt-1 text-xs sm:text-sm font-bold font-mono text-zinc-400';
+
+        const volRatio = Number(lc.volume_ratio || 1.0);
+        const volEl = document.getElementById('conf-vol');
+        volEl.textContent = `${volRatio.toFixed(2)}x`;
+        volEl.className = volRatio >= 1.15
+          ? 'mt-1 text-xs sm:text-sm font-bold font-mono text-emerald-400'
+          : 'mt-1 text-xs sm:text-sm font-bold font-mono text-zinc-300';
+      }
     }
 
     async function fetchDashboard() {
