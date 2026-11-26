@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
 from datetime import datetime, timezone
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 from sqlalchemy.orm import Session
 
@@ -22,10 +24,14 @@ from app.brokers.paper_sim import (
 from app.config import settings
 from app.database import SessionLocal
 from app.engine.confluence import ConfluenceFilter
+from app.engine.recovery import reconcile_startup_state
 from app.engine.risk_manager import RiskManager
 from app.engine.session_guard import SessionGuard
 from app.engine.strategies import StrategyDispatcher
 from app.models import BotState, StrategyConfig, SystemLog, Trade
+from app.services.notifier import TelegramNotifier
+
+logger = logging.getLogger("apex_pulse.runner")
 
 
 class BotRunner:
@@ -42,6 +48,7 @@ class BotRunner:
         forex_router: Optional[ForexRouter] = None,
         confluence_filter: Optional[ConfluenceFilter] = None,
         session_guard: Optional[SessionGuard] = None,
+        notifier: Optional[TelegramNotifier] = None,
     ) -> None:
         self._session_factory = session_factory
         self.broker = broker or PaperSimBroker(session_factory=session_factory)
@@ -61,11 +68,15 @@ class BotRunner:
         )
         self.confluence_filter = confluence_filter or ConfluenceFilter()
         self.session_guard = session_guard or SessionGuard()
+        self.notifier = notifier or TelegramNotifier()
         self._task: Optional[asyncio.Task[None]] = None
         self._stop_event = asyncio.Event()
+        self._tick_lock = asyncio.Lock()
+        self._pending_notifications: list[tuple[str, dict[str, Any]]] = []
         self._initial_risks: dict[int, float] = {}
         self._tick_count: int = 0
         self._last_loss_tick: dict[str, int] = {}
+        self.last_recovery_report: Optional[dict[str, Any]] = None
         self.last_confluence: dict[str, object] = {
             "symbol": "BTCUSDT",
             "score": 0,
@@ -88,16 +99,26 @@ class BotRunner:
         return datetime.now(timezone.utc)
 
     async def start(self) -> None:
-        """Seed initial telemetry and launch the background heartbeat task."""
+        """Seed initial telemetry, reconcile startup state, and optionally launch background loop."""
         db = self._session_factory()
         try:
             self.broker.seed_demo_data(db)
+            self.last_recovery_report = reconcile_startup_state(
+                db=db,
+                bybit_broker=self.bybit_router,
+                forex_broker=self.forex_router,
+            )
         finally:
             db.close()
 
         self._stop_event.clear()
-        if self._task is None or self._task.done():
-            self._task = asyncio.create_task(self._run_loop())
+        if settings.ENABLE_BACKGROUND_LOOP:
+            if self._task is None or self._task.done():
+                self._task = asyncio.create_task(self._run_loop())
+        else:
+            logger.info(
+                "ENABLE_BACKGROUND_LOOP=false: background heartbeat disabled (cron-driven mode)."
+            )
 
     async def stop(self) -> None:
         """Signal the loop to stop and await clean task termination."""
@@ -110,31 +131,93 @@ class BotRunner:
                 pass
         self._task = None
 
-    async def _run_loop(self) -> None:
-        """Main background loop with isolated exception handling."""
-        while not self._stop_event.is_set():
-            try:
-                self.run_once()
-            except Exception as exc:  # pragma: no cover - defensive guard
-                self._log_error(f"Heartbeat loop error: {exc}")
-
-            try:
-                await asyncio.wait_for(self._stop_event.wait(), timeout=self.interval_seconds)
-            except asyncio.TimeoutError:
+    async def _dispatch_pending_notifications(self) -> None:
+        """Send queued Telegram notifications asynchronously without blocking or raising."""
+        if not self._pending_notifications:
+            return
+        queued = list(self._pending_notifications)
+        self._pending_notifications.clear()
+        for method_name, kwargs in queued:
+            handler = getattr(self.notifier, method_name, None)
+            if handler is None:
                 continue
+            try:
+                await handler(**kwargs)
+            except Exception as exc:  # pragma: no cover - defensive guard
+                logger.warning("Notification %s failed (non-fatal): %s", method_name, exc)
+
+    def _read_tick_summary(self) -> tuple[bool, dict[str, str]]:
+        """Read current kill_switch flag and active regimes for cron/status responses."""
+        db = self._session_factory()
+        try:
+            state = db.query(BotState).first()
+            if state is None:
+                return False, {"bybit": "UNKNOWN", "forex": "UNKNOWN"}
+            return (
+                bool(state.kill_switch_active),
+                {
+                    "bybit": str(state.active_regime_bybit),
+                    "forex": str(state.active_regime_forex),
+                },
+            )
+        finally:
+            db.close()
+
+    async def run_locked_tick(self) -> dict[str, Any]:
+        """Run one mutually-excluded trading tick off the event loop and dispatch alerts."""
+        async with self._tick_lock:
+            started = time.perf_counter()
+            await asyncio.to_thread(self.run_once)
+            await self._dispatch_pending_notifications()
+            kill_switch, regimes = await asyncio.to_thread(self._read_tick_summary)
+            duration_ms = round((time.perf_counter() - started) * 1000.0, 2)
+            return {
+                "status": "ok",
+                "kill_switch": kill_switch,
+                "duration_ms": duration_ms,
+                "regimes": regimes,
+            }
+
+    async def _run_loop(self) -> None:
+        """Main background loop with isolated exception handling and graceful cancellation."""
+        try:
+            while not self._stop_event.is_set():
+                try:
+                    await self.run_locked_tick()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:  # pragma: no cover - defensive guard
+                    self._log_error(f"Heartbeat loop error: {exc}")
+
+                try:
+                    await asyncio.wait_for(self._stop_event.wait(), timeout=self.interval_seconds)
+                except asyncio.TimeoutError:
+                    continue
+        except asyncio.CancelledError:
+            return
 
     def _engage_kill_switch(self, db: Session, state: BotState, reason: str) -> None:
         """Persist Kill Switch state, close all open positions, and emit CRITICAL log."""
         state.kill_switch_active = True
         state.is_running = False
         state.kill_switch_reason = reason
-        for pos in self.broker.get_open_positions(db=db):
+        open_positions = self.broker.get_open_positions(db=db)
+        for pos in open_positions:
             self.broker.close_position(pos["id"], "Daily Loss Limit Kill Switch", db=db)
         db.add(
             SystemLog(
                 level="CRITICAL",
                 source="RiskGuard",
                 message=reason,
+            )
+        )
+        self._pending_notifications.append(
+            (
+                "notify_kill_switch",
+                {
+                    "reason": reason,
+                    "closed_positions": len(open_positions),
+                },
             )
         )
 
@@ -201,6 +284,19 @@ class BotRunner:
                     ),
                 )
             )
+            self._pending_notifications.append(
+                (
+                    "notify_partial_scale_out",
+                    {
+                        "symbol": trade.symbol,
+                        "side": trade.side,
+                        "trade_id": trade.id,
+                        "partial_pnl_usd": partial_pnl,
+                        "new_stop_loss": rounded_sl,
+                        "remaining_qty": trade.qty,
+                    },
+                )
+            )
 
     def _apply_trailing_stops(self, db: Session) -> None:
         """Apply RiskManager trailing SL logic to all currently open trades."""
@@ -262,19 +358,38 @@ class BotRunner:
 
             balances = self.broker.tick_market(db)
 
-            # Track losing trades closed during this tick for 3-candle anti-revenge cooldown
+            # Track trades closed during this tick (alerts + 3-candle anti-revenge cooldown on losses)
             if open_ids_before:
-                newly_closed_losses = (
+                newly_closed = (
                     db.query(Trade)
                     .filter(
                         Trade.id.in_(open_ids_before),
                         Trade.status == "CLOSED",
-                        Trade.pnl_usd < 0.0,
                     )
                     .all()
                 )
-                for closed_trade in newly_closed_losses:
-                    self._last_loss_tick[closed_trade.symbol] = self._tick_count
+                for closed_trade in newly_closed:
+                    if float(closed_trade.pnl_usd) < 0.0:
+                        self._last_loss_tick[closed_trade.symbol] = self._tick_count
+                    self._pending_notifications.append(
+                        (
+                            "notify_trade_closed",
+                            {
+                                "symbol": closed_trade.symbol,
+                                "side": closed_trade.side,
+                                "market": closed_trade.market,
+                                "exit_price": float(
+                                    closed_trade.exit_price
+                                    if closed_trade.exit_price is not None
+                                    else closed_trade.current_price
+                                ),
+                                "pnl_usd": float(closed_trade.pnl_usd),
+                                "pnl_pct": float(closed_trade.pnl_pct),
+                                "strategy_name": closed_trade.strategy_name,
+                                "reason": closed_trade.entry_reason or "",
+                            },
+                        )
+                    )
 
             # Lock +1.0R partial scale-out profits, then tighten trailing stops on surviving open trades
             self._apply_partial_scale_outs(db)
@@ -437,6 +552,22 @@ class BotRunner:
                     )
                     self._initial_risks[created["id"]] = abs(
                         float(created["entry_price"]) - float(created["stop_loss"])
+                    )
+                    self._pending_notifications.append(
+                        (
+                            "notify_trade_opened",
+                            {
+                                "symbol": symbol,
+                                "side": order_side,
+                                "market": spec["market"],
+                                "qty": round(decision.qty, 6),
+                                "entry_price": float(created["entry_price"]),
+                                "stop_loss": round(signal.stop_loss, decimals),
+                                "take_profit": round(signal.take_profit, decimals),
+                                "strategy_name": signal.strategy_name,
+                                "reason": f"{signal.reason} [Confluence {conf_result.score}/100]",
+                            },
+                        )
                     )
 
             db.commit()

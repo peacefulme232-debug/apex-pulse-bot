@@ -91,8 +91,14 @@
           </div>
         </div>
 
-        <!-- Kill Switch / Resume Controls -->
+        <!-- Kill Switch / Resume / Lock Controls -->
         <div class="flex items-center gap-2">
+          <button id="btn-logout" onclick="logoutDashboard()" title="Lock Dashboard" class="hidden items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold bg-zinc-900/90 text-zinc-300 border border-zinc-700/80 hover:bg-zinc-800 hover:text-white active:scale-95 transition">
+            <svg class="w-3.5 h-3.5 text-zinc-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+            </svg>
+            <span class="hidden sm:inline">Lock</span>
+          </button>
           <button id="btn-resume" onclick="resumeBot()" class="hidden items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30 active:scale-95 transition">
             <span>▶</span>
             <span>Resume Paper Loop</span>
@@ -624,6 +630,44 @@
     </div>
   </div>
 
+  <!-- Obsidian Liquid-Glass Phone PIN Lock Overlay -->
+  <div id="pin-lock-overlay" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-[#09090b]/92 backdrop-blur-xl px-4">
+    <div class="glass-card w-full max-w-sm rounded-3xl p-6 shadow-2xl shadow-black/60 border border-zinc-700/60">
+      <div class="flex flex-col items-center text-center">
+        <div class="h-12 w-12 rounded-2xl bg-gradient-to-br from-emerald-400 to-emerald-600 flex items-center justify-center shadow-lg shadow-emerald-500/25 mb-3">
+          <svg class="w-6 h-6 text-zinc-950" fill="none" stroke="currentColor" stroke-width="2.4" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+          </svg>
+        </div>
+        <h2 class="text-lg font-bold tracking-tight text-white">APEX-PULSE LOCKED</h2>
+        <p class="mt-1 text-xs text-zinc-400">Enter your Dashboard PIN to unlock live telemetry and controls.</p>
+      </div>
+
+      <form id="pin-login-form" onsubmit="submitPinLogin(event)" class="mt-5 space-y-3">
+        <div>
+          <label for="pin-input" class="sr-only">Dashboard PIN</label>
+          <input
+            id="pin-input"
+            type="password"
+            inputmode="numeric"
+            autocomplete="current-password"
+            placeholder="Enter PIN"
+            required
+            class="w-full px-4 py-3 rounded-2xl bg-zinc-950/90 border border-zinc-700/80 text-center text-lg font-mono tracking-[0.35em] text-white placeholder:tracking-normal placeholder:text-zinc-500 focus:outline-none focus:border-emerald-500/70 focus:ring-2 focus:ring-emerald-500/20"
+          />
+        </div>
+        <div id="pin-error" class="hidden rounded-xl bg-rose-950/70 border border-rose-500/40 px-3 py-2 text-xs text-rose-200 text-center font-mono"></div>
+        <button
+          id="btn-pin-unlock"
+          type="submit"
+          class="w-full py-3 rounded-2xl text-sm font-bold tracking-wide bg-emerald-500 hover:bg-emerald-400 text-zinc-950 active:scale-[0.98] transition shadow-lg shadow-emerald-500/20"
+        >
+          Unlock Terminal
+        </button>
+      </form>
+    </div>
+  </div>
+
   <script>
     let currentMarket = 'ALL';
     let currentView = 'terminal';
@@ -639,6 +683,10 @@
     let isFetchingSummary = false;
     let isFetchingChart = false;
     let isRunningBacktest = false;
+    let authEnabled = false;
+    let isAuthenticated = false;
+    let pollTimerId = null;
+    let lockoutTimerId = null;
 
     function fmtUsd(val) {
       const num = Number(val || 0);
@@ -1113,10 +1161,14 @@
     }
 
     async function fetchSummary() {
-      if (isFetchingSummary) return;
+      if (isFetchingSummary || (authEnabled && !isAuthenticated)) return;
       isFetchingSummary = true;
       try {
         const res = await fetch(`/api/summary?market=${encodeURIComponent(currentMarket)}`);
+        if (res.status === 401) {
+          handleAuthExpired();
+          return;
+        }
         if (res.ok) {
           const data = await res.json();
           applySummaryData(data);
@@ -1129,10 +1181,14 @@
     }
 
     async function fetchDashboard() {
-      if (isFetching) return;
+      if (isFetching || (authEnabled && !isAuthenticated)) return;
       isFetching = true;
       try {
         const res = await fetch(`/api/dashboard?market=${encodeURIComponent(currentMarket)}`);
+        if (res.status === 401) {
+          handleAuthExpired();
+          return;
+        }
         if (res.ok) {
           const data = await res.json();
           applyDashboardData(data);
@@ -1145,11 +1201,15 @@
     }
 
     async function toggleStrategy(name) {
-      await fetch('/api/strategy/toggle', {
+      const res = await fetch('/api/strategy/toggle', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name })
       });
+      if (res.status === 401) {
+        handleAuthExpired();
+        return;
+      }
       fetchDashboard();
       if (currentView === 'summarizer') fetchSummary();
     }
@@ -1164,17 +1224,25 @@
 
     async function confirmKillSwitch() {
       closeKillModal();
-      await fetch('/api/kill-switch', {
+      const res = await fetch('/api/kill-switch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reason: 'Manual Emergency Kill Switch triggered from dashboard.' })
       });
+      if (res.status === 401) {
+        handleAuthExpired();
+        return;
+      }
       fetchDashboard();
       if (currentView === 'summarizer') fetchSummary();
     }
 
     async function resumeBot() {
-      await fetch('/api/bot/resume', { method: 'POST' });
+      const res = await fetch('/api/bot/resume', { method: 'POST' });
+      if (res.status === 401) {
+        handleAuthExpired();
+        return;
+      }
       fetchDashboard();
       if (currentView === 'summarizer') fetchSummary();
     }
@@ -1273,13 +1341,17 @@
     }
 
     async function fetchLiveChart() {
-      if (isFetchingChart) return;
+      if (isFetchingChart || (authEnabled && !isAuthenticated)) return;
       isFetchingChart = true;
       try {
         initLiveCandleChart();
         const market = chartSymbol.includes('_') ? 'FOREX' : 'BYBIT';
         const url = `/api/chart/${encodeURIComponent(chartSymbol)}?market=${market}&interval=${encodeURIComponent(chartInterval)}&limit=150`;
         const res = await fetch(url);
+        if (res.status === 401) {
+          handleAuthExpired();
+          return;
+        }
         if (!res.ok) return;
         const data = await res.json();
 
@@ -1531,6 +1603,10 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         });
+        if (res.status === 401) {
+          handleAuthExpired();
+          return;
+        }
         if (!res.ok) {
           const text = await res.text();
           throw new Error(`HTTP ${res.status}: ${text}`);
@@ -1548,22 +1624,181 @@
       }
     }
 
-    updateViewTabs();
-    updateMarketTabs();
-    updateChartPills();
-    initChart();
-    initLiveCandleChart();
-    fetchDashboard();
-    fetchLiveChart();
-    setInterval(() => {
-      if (currentView === 'terminal') {
-        fetchDashboard();
-        fetchLiveChart();
-      } else if (currentView === 'summarizer') {
-        fetchDashboard();
-        fetchSummary();
+    function setPinError(message) {
+      const errEl = document.getElementById('pin-error');
+      if (!errEl) return;
+      if (message) {
+        errEl.textContent = message;
+        errEl.classList.remove('hidden');
+      } else {
+        errEl.textContent = '';
+        errEl.classList.add('hidden');
       }
-    }, 3000);
+    }
+
+    function startLockoutCountdown(seconds) {
+      if (lockoutTimerId) clearInterval(lockoutTimerId);
+      let remaining = Math.max(1, Number(seconds) || 60);
+      const btn = document.getElementById('btn-pin-unlock');
+      if (btn) btn.disabled = true;
+      setPinError(`Too many failed attempts. Locked for ${remaining}s.`);
+      lockoutTimerId = setInterval(() => {
+        remaining -= 1;
+        if (remaining <= 0) {
+          clearInterval(lockoutTimerId);
+          lockoutTimerId = null;
+          if (btn) btn.disabled = false;
+          setPinError('');
+        } else {
+          setPinError(`Too many failed attempts. Locked for ${remaining}s.`);
+        }
+      }, 1000);
+    }
+
+    function updateLogoutButton() {
+      const btn = document.getElementById('btn-logout');
+      if (!btn) return;
+      if (authEnabled && isAuthenticated) {
+        btn.classList.remove('hidden');
+        btn.classList.add('inline-flex');
+      } else {
+        btn.classList.add('hidden');
+        btn.classList.remove('inline-flex');
+      }
+    }
+
+    function stopPolling() {
+      if (pollTimerId !== null) {
+        clearInterval(pollTimerId);
+        pollTimerId = null;
+      }
+    }
+
+    function startPolling() {
+      stopPolling();
+      fetchDashboard();
+      fetchLiveChart();
+      if (currentView === 'summarizer') fetchSummary();
+      pollTimerId = setInterval(() => {
+        if (authEnabled && !isAuthenticated) return;
+        if (currentView === 'terminal') {
+          fetchDashboard();
+          fetchLiveChart();
+        } else if (currentView === 'summarizer') {
+          fetchDashboard();
+          fetchSummary();
+        }
+      }, 3000);
+    }
+
+    function showPinOverlay(message) {
+      stopPolling();
+      const overlay = document.getElementById('pin-lock-overlay');
+      if (overlay) overlay.classList.remove('hidden');
+      updateLogoutButton();
+      if (message) setPinError(message);
+      const input = document.getElementById('pin-input');
+      if (input) {
+        input.value = '';
+        setTimeout(() => input.focus(), 50);
+      }
+    }
+
+    function hidePinOverlay() {
+      const overlay = document.getElementById('pin-lock-overlay');
+      if (overlay) overlay.classList.add('hidden');
+      setPinError('');
+      updateLogoutButton();
+    }
+
+    function handleAuthExpired() {
+      authEnabled = true;
+      isAuthenticated = false;
+      showPinOverlay('Session expired. Enter your PIN to unlock.');
+    }
+
+    async function submitPinLogin(event) {
+      event.preventDefault();
+      const input = document.getElementById('pin-input');
+      const btn = document.getElementById('btn-pin-unlock');
+      const pin = (input ? input.value : '').trim();
+      if (!pin) return;
+
+      if (btn) btn.disabled = true;
+      setPinError('');
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pin }),
+        });
+        if (res.status === 429) {
+          const retryAfter = parseInt(res.headers.get('Retry-After') || '60', 10);
+          startLockoutCountdown(retryAfter);
+          return;
+        }
+        if (res.status === 401) {
+          setPinError('Incorrect PIN. Please try again.');
+          if (input) {
+            input.value = '';
+            input.focus();
+          }
+          if (btn) btn.disabled = false;
+          return;
+        }
+        if (!res.ok) {
+          setPinError(`Login failed (HTTP ${res.status}).`);
+          if (btn) btn.disabled = false;
+          return;
+        }
+        isAuthenticated = true;
+        if (btn) btn.disabled = false;
+        hidePinOverlay();
+        startPolling();
+      } catch (err) {
+        setPinError('Network error while unlocking.');
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    async function logoutDashboard() {
+      try {
+        await fetch('/api/auth/logout', { method: 'POST' });
+      } catch (err) {
+        console.error('Logout error:', err);
+      }
+      isAuthenticated = false;
+      showPinOverlay('');
+    }
+
+    async function bootstrapApp() {
+      updateViewTabs();
+      updateMarketTabs();
+      updateChartPills();
+      initChart();
+      initLiveCandleChart();
+
+      try {
+        const res = await fetch('/api/auth/status');
+        if (res.ok) {
+          const status = await res.json();
+          authEnabled = Boolean(status.auth_enabled);
+          isAuthenticated = Boolean(status.authenticated);
+          updateLogoutButton();
+          if (authEnabled && !isAuthenticated) {
+            showPinOverlay('');
+            return;
+          }
+        }
+      } catch (err) {
+        console.error('Auth status check failed:', err);
+      }
+
+      hidePinOverlay();
+      startPolling();
+    }
+
+    bootstrapApp();
   </script>
 </body>
 </html>

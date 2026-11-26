@@ -115,7 +115,8 @@ def _build_completed_4h_candles(df: pd.DataFrame) -> tuple[pd.DataFrame, np.ndar
         .rename(columns={"bucket": "timestamp"})
     )
 
-    bucket_end_ns = pd.Index(grouped["timestamp"] + pd.Timedelta(hours=4)).asi8
+    four_hours_ns = np.int64(4 * 3600 * 1_000_000_000)
+    bucket_end_ns = pd.Index(grouped["timestamp"]).asi8 + four_hours_ns
     return grouped, bucket_end_ns
 
 

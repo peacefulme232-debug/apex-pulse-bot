@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal, Optional
 
-from fastapi import Body, Depends, FastAPI, HTTPException, Query
+from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, sessionmaker
@@ -24,8 +24,26 @@ from app.engine.historical_data import HistoricalDataFetcher
 from app.engine.runner import BotRunner
 from app.engine.summarizer import BotSummarizer
 from app.models import BotState, EquitySnapshot, StrategyConfig, SystemLog, Trade
+from app.security import (
+    clear_session_cookie,
+    extract_client_ip,
+    is_auth_enabled,
+    is_request_authenticated,
+    log_security_startup_warnings,
+    rate_limiter,
+    require_dashboard_auth,
+    set_session_cookie,
+    verify_cron_secret,
+    verify_pin,
+)
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
+
+
+class PinLoginRequest(BaseModel):
+    """Payload for unlocking the dashboard with the configured Phone PIN."""
+
+    pin: str = Field(min_length=1, max_length=64)
 
 
 class StrategyToggleRequest(BaseModel):
@@ -86,19 +104,22 @@ def create_app(database_url: Optional[str] = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(fastapi_app: FastAPI):
+        log_security_startup_warnings()
         init_db(target_engine=target_engine)
         await bot_runner.start()
         fastapi_app.state.bot_runner = bot_runner
         fastapi_app.state.broker = broker
         try:
             yield
+        except asyncio.CancelledError:
+            pass
         finally:
             await bot_runner.stop()
 
     fastapi_app = FastAPI(
         title="APEX-PULSE",
-        description="24/7 Cloud-Ready Multi-Market Algorithmic Trading Bot (Phase 4)",
-        version="0.4.0",
+        description="24/7 Cloud-Ready Multi-Market Algorithmic Trading Bot (Phase 6 Production)",
+        version="0.6.0",
         lifespan=lifespan,
     )
 
@@ -154,20 +175,79 @@ def create_app(database_url: Optional[str] = None) -> FastAPI:
 
     @fastapi_app.get("/health")
     def health_check(db: Session = Depends(db_dependency)) -> dict[str, Any]:
-        """Return service health, active trading mode, and kill switch status."""
+        """Return minimal non-sensitive service health, mode, kill switch, auth, and loop status."""
         state = _ensure_bot_state(db, broker)
         return {
             "status": "ok",
             "mode": settings.TRADING_MODE,
             "kill_switch": bool(state.kill_switch_active),
+            "auth_enabled": is_auth_enabled(),
+            "background_loop": bool(settings.ENABLE_BACKGROUND_LOOP),
         }
 
-    @fastapi_app.get("/api/brokers/status")
+    @fastapi_app.get("/api/auth/status")
+    def get_auth_status(request: Request) -> dict[str, bool]:
+        """Return whether PIN auth is enabled and whether the caller has a valid session."""
+        return {
+            "auth_enabled": is_auth_enabled(),
+            "authenticated": is_request_authenticated(request),
+        }
+
+    @fastapi_app.post("/api/auth/login")
+    def login_with_pin(
+        payload: PinLoginRequest,
+        request: Request,
+        response: Response,
+        db: Session = Depends(db_dependency),
+    ) -> dict[str, Any]:
+        """Validate Dashboard PIN with dual-window brute-force protection and set HttpOnly cookie."""
+        if not is_auth_enabled():
+            return {"status": "ok", "authenticated": True, "auth_enabled": False}
+
+        client_ip = extract_client_ip(request)
+        allowed, retry_after = rate_limiter.check_allowed(client_ip)
+        if not allowed:
+            db.add(
+                SystemLog(
+                    level="WARN",
+                    source="AuthGuard",
+                    message=f"PIN login locked out for {client_ip} (Retry-After: {retry_after}s).",
+                )
+            )
+            db.commit()
+            raise HTTPException(
+                status_code=429,
+                detail=f"Too many failed PIN attempts. Try again in {retry_after} seconds.",
+                headers={"Retry-After": str(retry_after)},
+            )
+
+        if not verify_pin(payload.pin):
+            rate_limiter.record_failure(client_ip)
+            db.add(
+                SystemLog(
+                    level="WARN",
+                    source="AuthGuard",
+                    message=f"Failed dashboard PIN login attempt from {client_ip}.",
+                )
+            )
+            db.commit()
+            raise HTTPException(status_code=401, detail="Invalid PIN.")
+
+        set_session_cookie(response, request)
+        return {"status": "ok", "authenticated": True, "auth_enabled": True}
+
+    @fastapi_app.post("/api/auth/logout")
+    def logout_session(request: Request, response: Response) -> dict[str, Any]:
+        """Clear the apex_session cookie to lock the dashboard."""
+        clear_session_cookie(response, request)
+        return {"status": "ok", "authenticated": False}
+
+    @fastapi_app.get("/api/brokers/status", dependencies=[Depends(require_dashboard_auth)])
     def get_brokers_status() -> dict[str, Any]:
         """Return live connection health for Bybit, Forex brokers, and Forex session/news guard."""
         return _build_brokers_status()
 
-    @fastapi_app.get("/api/summary")
+    @fastapi_app.get("/api/summary", dependencies=[Depends(require_dashboard_auth)])
     def get_summary(
         market: Literal["ALL", "BYBIT", "FOREX"] = Query(default="ALL"),
         db: Session = Depends(db_dependency),
@@ -185,7 +265,7 @@ def create_app(database_url: Optional[str] = None) -> FastAPI:
             forex_session=forex_session,
         )
 
-    @fastapi_app.get("/api/dashboard")
+    @fastapi_app.get("/api/dashboard", dependencies=[Depends(require_dashboard_auth)])
     def get_dashboard(
         market: Literal["ALL", "BYBIT", "FOREX"] = Query(default="ALL"),
         db: Session = Depends(db_dependency),
@@ -315,7 +395,7 @@ def create_app(database_url: Optional[str] = None) -> FastAPI:
             ],
         }
 
-    @fastapi_app.post("/api/strategy/toggle")
+    @fastapi_app.post("/api/strategy/toggle", dependencies=[Depends(require_dashboard_auth)])
     def toggle_strategy(
         payload: StrategyToggleRequest,
         db: Session = Depends(db_dependency),
@@ -343,8 +423,8 @@ def create_app(database_url: Optional[str] = None) -> FastAPI:
             "enabled": strat.enabled,
         }
 
-    @fastapi_app.post("/api/kill-switch")
-    def activate_kill_switch(
+    @fastapi_app.post("/api/kill-switch", dependencies=[Depends(require_dashboard_auth)])
+    async def activate_kill_switch(
         payload: Optional[KillSwitchRequest] = Body(default=None),
         db: Session = Depends(db_dependency),
     ) -> dict[str, Any]:
@@ -375,6 +455,7 @@ def create_app(database_url: Optional[str] = None) -> FastAPI:
             )
         )
         db.commit()
+        await bot_runner.notifier.notify_kill_switch(reason=reason, closed_positions=closed_count)
         return {
             "status": "ok",
             "kill_switch_active": True,
@@ -383,7 +464,7 @@ def create_app(database_url: Optional[str] = None) -> FastAPI:
             "reason": reason,
         }
 
-    @fastapi_app.post("/api/bot/resume")
+    @fastapi_app.post("/api/bot/resume", dependencies=[Depends(require_dashboard_auth)])
     def resume_bot(db: Session = Depends(db_dependency)) -> dict[str, Any]:
         """Safely reset Kill Switch and resume the paper trading loop."""
         state = _ensure_bot_state(db, broker)
@@ -406,7 +487,7 @@ def create_app(database_url: Optional[str] = None) -> FastAPI:
             "is_running": True,
         }
 
-    @fastapi_app.post("/api/backtest/run")
+    @fastapi_app.post("/api/backtest/run", dependencies=[Depends(require_dashboard_auth)])
     async def run_backtest(payload: BacktestRequest) -> dict[str, Any]:
         """Run a zero-lookahead historical backtest off the async event loop."""
         symbol = payload.symbol.strip()
@@ -435,7 +516,7 @@ def create_app(database_url: Optional[str] = None) -> FastAPI:
 
         return await asyncio.to_thread(_execute_backtest)
 
-    @fastapi_app.get("/api/chart/{symbol}")
+    @fastapi_app.get("/api/chart/{symbol}", dependencies=[Depends(require_dashboard_auth)])
     def get_chart_data(
         symbol: str,
         market: Optional[Literal["BYBIT", "FOREX"]] = Query(default=None),
@@ -516,6 +597,39 @@ def create_app(database_url: Optional[str] = None) -> FastAPI:
             "source": source,
             "candles": candles,
             "open_trade": open_trade,
+        }
+
+    @fastapi_app.post("/api/alerts/test", dependencies=[Depends(require_dashboard_auth)])
+    async def send_test_alert() -> dict[str, Any]:
+        """Dispatch a test Telegram HTML alert (PIN-protected)."""
+        sent, reason = await bot_runner.notifier.send_test_alert()
+        return {"sent": sent, "reason": reason}
+
+    @fastapi_app.post("/api/cron/tick", dependencies=[Depends(verify_cron_secret)])
+    async def cron_tick() -> dict[str, Any]:
+        """Run one mutually-excluded trading tick triggered by Cloud Scheduler / external cron."""
+        return await bot_runner.run_locked_tick()
+
+    @fastapi_app.post("/api/cron/daily-summary", dependencies=[Depends(verify_cron_secret)])
+    async def cron_daily_summary(db: Session = Depends(db_dependency)) -> dict[str, Any]:
+        """Build BotSummarizer daily report and dispatch it via TelegramNotifier."""
+        _ensure_bot_state(db, broker)
+        balances = broker.get_balance(db=db)
+        forex_symbols = [s.strip() for s in settings.FOREX_SYMBOLS.split(",") if s.strip()]
+        primary_fx = forex_symbols[0] if forex_symbols else "EUR_USD"
+        forex_session = bot_runner.get_forex_session_status(primary_fx)
+        summary = summarizer.build_summary(
+            db=db,
+            market="ALL",
+            balances=balances,
+            forex_session=forex_session,
+        )
+        sent = await bot_runner.notifier.notify_daily_summary(summary)
+        return {
+            "status": "ok",
+            "sent": sent,
+            "health_grade": summary["health_grade"],
+            "net_pnl_usd": summary["net_pnl_usd"],
         }
 
     return fastapi_app

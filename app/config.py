@@ -45,6 +45,15 @@ class Settings(BaseSettings):
     # Phase 5: +1.0R Partial Take-Profit Scale-Out
     PARTIAL_TP_ENABLED: bool = True
 
+    # Phase 6: Security (Phone PIN Gate), 2-Way Cron Engine, & Telegram Sleep Alerts
+    DASHBOARD_PIN: str = ""
+    SESSION_SECRET: str = ""
+    SESSION_TTL_HOURS: int = 24
+    ENABLE_BACKGROUND_LOOP: bool = True
+    CRON_SECRET: str = ""
+    TELEGRAM_BOT_TOKEN: str = ""
+    TELEGRAM_CHAT_ID: str = ""
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -142,6 +151,14 @@ class Settings(BaseSettings):
         """Ensure news blackout window is non-negative."""
         if value < 0 or value > 240:
             raise ValueError(f"NEWS_BLACKOUT_MINUTES must be between 0 and 240, got {value}.")
+        return value
+
+    @field_validator("SESSION_TTL_HOURS")
+    @classmethod
+    def validate_session_ttl_hours(cls, value: int) -> int:
+        """Ensure session cookie TTL is between 1 hour and 30 days."""
+        if value < 1 or value > 720:
+            raise ValueError(f"SESSION_TTL_HOURS must be between 1 and 720, got {value}.")
         return value
 
     @model_validator(mode="after")

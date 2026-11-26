@@ -14,16 +14,25 @@ class Base(DeclarativeBase):
 
 
 def create_db_engine(database_url: str) -> Engine:
-    """Create a SQLAlchemy engine with SQLite WAL/FK pragmas when using SQLite."""
-    is_sqlite = database_url.startswith("sqlite")
-    connect_args = {"check_same_thread": False} if is_sqlite else {}
-    db_engine = create_engine(
-        database_url,
-        connect_args=connect_args,
-        pool_pre_ping=True,
+    """Create a SQLAlchemy engine with SQLite WAL/FK pragmas or serverless Postgres pooling."""
+    normalized_url = (
+        database_url.replace("postgres://", "postgresql://", 1)
+        if database_url.startswith("postgres://")
+        else database_url
     )
-
+    is_sqlite = normalized_url.startswith("sqlite")
+    engine_kwargs: dict[str, object] = {
+        "pool_pre_ping": True,
+    }
     if is_sqlite:
+        engine_kwargs["connect_args"] = {"check_same_thread": False}
+    else:
+        # Prevent stale idle connections on serverless Postgres (Neon/Supabase) after cold starts or cron gaps
+        engine_kwargs["pool_recycle"] = 300
+
+    db_engine = create_engine(normalized_url, **engine_kwargs)
+
+    if db_engine.dialect.name == "sqlite":
 
         @event.listens_for(db_engine, "connect")
         def _set_sqlite_pragmas(dbapi_connection, _connection_record) -> None:
