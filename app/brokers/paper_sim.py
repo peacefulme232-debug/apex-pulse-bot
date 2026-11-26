@@ -6,6 +6,7 @@ import random
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
+import pandas as pd
 from sqlalchemy.orm import Session
 
 from app.brokers.base import BaseBroker
@@ -73,8 +74,12 @@ class PaperSimBroker(BaseBroker):
     def __init__(self, session_factory: Callable[[], Session] = SessionLocal) -> None:
         self._session_factory = session_factory
         self._prices: dict[str, float] = {
-            sym: spec["base_price"] for sym, spec in SYMBOL_SPECS.items()
+            sym: float(spec["base_price"]) for sym, spec in SYMBOL_SPECS.items()
         }
+        self._candles: dict[str, list[dict[str, Any]]] = {}
+        self._max_history_bars = 320
+        for sym in SYMBOL_SPECS:
+            self._init_symbol_candles(sym, bars=260)
 
     @staticmethod
     def _utcnow() -> datetime:
@@ -271,34 +276,90 @@ class PaperSimBroker(BaseBroker):
             if owns_session:
                 session.close()
 
-    def get_ohlcv(self, symbol: str, interval: str = "15m", limit: int = 50) -> list[dict[str, Any]]:
-        """Generate realistic simulated OHLCV candles around the current price."""
+    def _init_symbol_candles(self, symbol: str, bars: int = 260) -> None:
+        """Initialize a realistic historical OHLCV buffer anchored to the symbol's current price."""
         spec = SYMBOL_SPECS.get(symbol, {"base_price": 100.0, "volatility": 0.0015, "decimals": 2})
-        price = self._prices.get(symbol, float(spec["base_price"]))
+        target_price = self._prices.get(symbol, float(spec["base_price"]))
         vol = float(spec["volatility"])
         decimals = int(spec["decimals"])
 
+        # Generate a realistic mean-reverting path ending cleanly at target_price
+        raw_closes: list[float] = [target_price]
+        for _ in range(bars - 1):
+            drift = random.uniform(-vol, vol)
+            next_p = max(raw_closes[-1] * (1.0 + drift), 1e-6)
+            raw_closes.append(next_p)
+
+        scale = target_price / raw_closes[-1]
+        closes = [round(max(p * scale, 1e-6), decimals) for p in raw_closes]
+        closes[-1] = round(target_price, decimals)
+
         candles: list[dict[str, Any]] = []
         now = self._utcnow()
-        cursor = price * (1.0 - vol * 3)
-        for idx in range(limit):
-            open_p = round(cursor, decimals)
-            drift = random.uniform(-vol, vol * 1.05)
-            close_p = round(open_p * (1.0 + drift), decimals)
-            high_p = round(max(open_p, close_p) * (1.0 + random.uniform(0.0, vol * 0.6)), decimals)
-            low_p = round(min(open_p, close_p) * (1.0 - random.uniform(0.0, vol * 0.6)), decimals)
+        for idx, close_p in enumerate(closes):
+            open_p = closes[idx - 1] if idx > 0 else close_p
+            high_p = round(max(open_p, close_p) * (1.0 + random.uniform(0.0001, vol * 0.6)), decimals)
+            low_p = round(
+                max(min(open_p, close_p) * (1.0 - random.uniform(0.0001, vol * 0.6)), 1e-6),
+                decimals,
+            )
             candles.append(
                 {
-                    "timestamp": (now - timedelta(minutes=15 * (limit - idx))).isoformat(),
-                    "open": open_p,
-                    "high": high_p,
-                    "low": low_p,
-                    "close": close_p,
+                    "timestamp": now - timedelta(minutes=15 * (bars - idx)),
+                    "open": float(open_p),
+                    "high": float(max(high_p, open_p, close_p)),
+                    "low": float(min(low_p, open_p, close_p)),
+                    "close": float(close_p),
                     "volume": round(random.uniform(50.0, 500.0), 2),
                 }
             )
-            cursor = close_p
-        return candles
+
+        self._candles[symbol] = candles
+        self._prices[symbol] = float(candles[-1]["close"])
+
+    def _evolve_symbol_candle(self, symbol: str, new_close: float) -> None:
+        """Append a clean newly evolved candle to the symbol's OHLCV buffer."""
+        if symbol not in self._candles or not self._candles[symbol]:
+            self._init_symbol_candles(symbol, bars=260)
+
+        spec = SYMBOL_SPECS.get(symbol, {"base_price": 100.0, "volatility": 0.0015, "decimals": 2})
+        vol = float(spec["volatility"])
+        decimals = int(spec["decimals"])
+
+        history = self._candles[symbol]
+        prev = history[-1]
+        open_p = float(prev["close"])
+        close_p = round(max(float(new_close), 1e-6), decimals)
+        high_p = round(max(open_p, close_p) * (1.0 + random.uniform(0.0001, vol * 0.5)), decimals)
+        low_p = round(
+            max(min(open_p, close_p) * (1.0 - random.uniform(0.0001, vol * 0.5)), 1e-6),
+            decimals,
+        )
+        next_ts = prev["timestamp"] + timedelta(minutes=15)
+
+        history.append(
+            {
+                "timestamp": next_ts,
+                "open": float(open_p),
+                "high": float(max(high_p, open_p, close_p)),
+                "low": float(min(low_p, open_p, close_p)),
+                "close": float(close_p),
+                "volume": round(random.uniform(50.0, 500.0), 2),
+            }
+        )
+        if len(history) > self._max_history_bars:
+            del history[:-self._max_history_bars]
+
+    def get_ohlcv(self, symbol: str, interval: str = "15m", limit: int = 250) -> pd.DataFrame:
+        """Return a clean OHLCV DataFrame (timestamp, open, high, low, close, volume)."""
+        if symbol not in self._candles or len(self._candles[symbol]) < limit:
+            self._init_symbol_candles(symbol, bars=max(limit + 10, 260))
+
+        sliced = self._candles[symbol][-limit:]
+        return pd.DataFrame(
+            sliced,
+            columns=["timestamp", "open", "high", "low", "close", "volume"],
+        ).reset_index(drop=True)
 
     def place_order(
         self,
@@ -413,7 +474,9 @@ class PaperSimBroker(BaseBroker):
             decimals = int(spec["decimals"])
             current = self._prices[symbol]
             step = random.uniform(-vol, vol)
-            self._prices[symbol] = round(current * (1.0 + step), decimals)
+            new_price = round(max(current * (1.0 + step), 1e-6), decimals)
+            self._prices[symbol] = new_price
+            self._evolve_symbol_candle(symbol, new_price)
 
         open_trades = db.query(Trade).filter(Trade.status == "OPEN").all()
         for trade in open_trades:

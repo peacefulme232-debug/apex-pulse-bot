@@ -12,7 +12,7 @@ class BaseBroker(ABC):
         """Return current balances per market and total equity."""
 
     @abstractmethod
-    def get_ohlcv(self, symbol: str, interval: str = "15m", limit: int = 50) -> list[dict[str, Any]]:
+    def get_ohlcv(self, symbol: str, interval: str = "15m", limit: int = 250) -> Any:
         """Return recent OHLCV candles for a given symbol and timeframe."""
 
     @abstractmethod
