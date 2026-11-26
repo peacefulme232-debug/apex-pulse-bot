@@ -116,6 +116,9 @@ class PaperSimBroker(BaseBroker):
             "pnl_usd": round(trade.pnl_usd, 2),
             "pnl_pct": round(trade.pnl_pct, 2),
             "entry_reason": trade.entry_reason,
+            "initial_qty": trade.initial_qty if trade.initial_qty is not None else trade.qty,
+            "partial_tp_taken": bool(trade.partial_tp_taken),
+            "realized_partial_pnl_usd": round(float(trade.realized_partial_pnl_usd or 0.0), 2),
             "opened_at": trade.opened_at.isoformat() if trade.opened_at else None,
             "closed_at": trade.closed_at.isoformat() if trade.closed_at else None,
         }
@@ -386,6 +389,9 @@ class PaperSimBroker(BaseBroker):
                 strategy_name=strategy_name,
                 status="OPEN",
                 qty=qty,
+                initial_qty=qty,
+                partial_tp_taken=False,
+                realized_partial_pnl_usd=0.0,
                 entry_price=entry_price,
                 current_price=entry_price,
                 stop_loss=stop_loss,
@@ -422,7 +428,8 @@ class PaperSimBroker(BaseBroker):
                 return self._trade_to_dict(trade)
 
             exit_price = trade.current_price or trade.entry_price
-            pnl_usd, pnl_pct = self._calc_pnl(trade.side, trade.entry_price, exit_price, trade.qty)
+            remaining_pnl_usd, pnl_pct = self._calc_pnl(trade.side, trade.entry_price, exit_price, trade.qty)
+            pnl_usd = round(float(trade.realized_partial_pnl_usd or 0.0) + remaining_pnl_usd, 2)
             trade.status = "CLOSED"
             trade.exit_price = exit_price
             trade.pnl_usd = pnl_usd
@@ -484,8 +491,8 @@ class PaperSimBroker(BaseBroker):
             decimals = int(spec["decimals"])
             live_price = round(self._prices.get(trade.symbol, trade.current_price), decimals)
             trade.current_price = live_price
-            pnl_usd, pnl_pct = self._calc_pnl(trade.side, trade.entry_price, live_price, trade.qty)
-            trade.pnl_usd = pnl_usd
+            remaining_pnl_usd, pnl_pct = self._calc_pnl(trade.side, trade.entry_price, live_price, trade.qty)
+            trade.pnl_usd = round(float(trade.realized_partial_pnl_usd or 0.0) + remaining_pnl_usd, 2)
             trade.pnl_pct = pnl_pct
 
             hit_sl = (trade.side == "LONG" and live_price <= trade.stop_loss) or (

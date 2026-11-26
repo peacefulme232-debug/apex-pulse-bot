@@ -34,6 +34,9 @@ class Trade(Base):
     pnl_usd: Mapped[float] = mapped_column(Float, default=0.0)
     pnl_pct: Mapped[float] = mapped_column(Float, default=0.0)
     entry_reason: Mapped[str] = mapped_column(Text, default="")
+    initial_qty: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    partial_tp_taken: Mapped[bool] = mapped_column(Boolean, default=False)
+    realized_partial_pnl_usd: Mapped[float] = mapped_column(Float, default=0.0)
     opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 

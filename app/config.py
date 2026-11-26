@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     DERIV_ACCOUNT_ID: str = ""
     DERIV_AUTH_MODE: str = "auto"  # auto | otp | legacy
 
+    # Phase 5: +1.0R Partial Take-Profit Scale-Out
+    PARTIAL_TP_ENABLED: bool = True
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

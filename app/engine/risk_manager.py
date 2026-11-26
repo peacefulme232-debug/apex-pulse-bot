@@ -19,6 +19,18 @@ class RiskDecision:
     trigger_kill_switch: bool = False
 
 
+@dataclass(frozen=True)
+class PartialScaleOutDecision:
+    """Typed decision output for +1.0R partial take-profit scale-out."""
+
+    should_scale_out: bool
+    close_qty: float
+    remaining_qty: float
+    new_stop_loss: float
+    locked_r: float
+    reason: str
+
+
 def _is_finite_positive(value: float | None) -> bool:
     return (
         value is not None
@@ -298,3 +310,137 @@ class RiskManager:
             target_sl = entry - 0.1 * r
             return min(sl, target_sl)
         return sl
+
+    @staticmethod
+    def evaluate_partial_scale_out(
+        side: str,
+        entry_price: float,
+        current_price: float,
+        current_sl: float,
+        initial_risk: float,
+        current_qty: float,
+        partial_already_taken: bool = False,
+        scale_out_fraction: float = 0.50,
+    ) -> PartialScaleOutDecision:
+        """Scale out 50% at >= +1.0R and move remaining runner SL to breakeven +0.05R."""
+        safe_sl = float(current_sl) if isinstance(current_sl, (int, float)) and math.isfinite(float(current_sl)) else 0.0
+        safe_qty = float(current_qty) if isinstance(current_qty, (int, float)) and math.isfinite(float(current_qty)) else 0.0
+
+        if partial_already_taken:
+            return PartialScaleOutDecision(
+                should_scale_out=False,
+                close_qty=0.0,
+                remaining_qty=max(0.0, safe_qty),
+                new_stop_loss=safe_sl,
+                locked_r=0.0,
+                reason="Partial take-profit already taken.",
+            )
+
+        if (
+            not _is_finite_positive(entry_price)
+            or not _is_finite_positive(current_price)
+            or not _is_finite_positive(current_sl)
+            or not _is_finite_positive(initial_risk)
+            or float(initial_risk) <= 1e-12
+            or not _is_finite_positive(current_qty)
+        ):
+            return PartialScaleOutDecision(
+                should_scale_out=False,
+                close_qty=0.0,
+                remaining_qty=max(0.0, safe_qty),
+                new_stop_loss=safe_sl,
+                locked_r=0.0,
+                reason="Invalid trade parameters or non-positive initial_risk.",
+            )
+
+        if not isinstance(scale_out_fraction, (int, float)) or not math.isfinite(float(scale_out_fraction)):
+            return PartialScaleOutDecision(
+                should_scale_out=False,
+                close_qty=0.0,
+                remaining_qty=safe_qty,
+                new_stop_loss=safe_sl,
+                locked_r=0.0,
+                reason="Invalid scale_out_fraction.",
+            )
+
+        frac = float(scale_out_fraction)
+        if frac <= 0.0 or frac >= 1.0:
+            return PartialScaleOutDecision(
+                should_scale_out=False,
+                close_qty=0.0,
+                remaining_qty=safe_qty,
+                new_stop_loss=safe_sl,
+                locked_r=0.0,
+                reason="scale_out_fraction must be strictly between 0 and 1.",
+            )
+
+        norm_side = _normalize_side(side)
+        if norm_side is None:
+            return PartialScaleOutDecision(
+                should_scale_out=False,
+                close_qty=0.0,
+                remaining_qty=safe_qty,
+                new_stop_loss=safe_sl,
+                locked_r=0.0,
+                reason=f"Unsupported trade side '{side}'.",
+            )
+
+        entry = float(entry_price)
+        price = float(current_price)
+        sl = float(current_sl)
+        r = float(initial_risk)
+        qty = float(current_qty)
+
+        if norm_side == "LONG":
+            open_profit = price - entry
+            if open_profit + 1e-12 < r:
+                return PartialScaleOutDecision(
+                    should_scale_out=False,
+                    close_qty=0.0,
+                    remaining_qty=qty,
+                    new_stop_loss=sl,
+                    locked_r=0.0,
+                    reason=f"Open profit {open_profit / r:.2f}R has not reached +1.00R.",
+                )
+            close_qty = qty * frac
+            remaining_qty = qty - close_qty
+            target_sl = entry + 0.05 * r
+            new_sl = max(sl, target_sl)
+            return PartialScaleOutDecision(
+                should_scale_out=True,
+                close_qty=close_qty,
+                remaining_qty=remaining_qty,
+                new_stop_loss=new_sl,
+                locked_r=1.0,
+                reason=(
+                    f"LONG +1.0R partial scale-out triggered: closed {frac * 100:.0f}% qty "
+                    f"and locked SL to {new_sl:.5f} (+0.05R breakeven)."
+                ),
+            )
+
+        # SHORT
+        open_profit = entry - price
+        if open_profit + 1e-12 < r:
+            return PartialScaleOutDecision(
+                should_scale_out=False,
+                close_qty=0.0,
+                remaining_qty=qty,
+                new_stop_loss=sl,
+                locked_r=0.0,
+                reason=f"Open profit {open_profit / r:.2f}R has not reached +1.00R.",
+            )
+        close_qty = qty * frac
+        remaining_qty = qty - close_qty
+        target_sl = entry - 0.05 * r
+        new_sl = min(sl, target_sl)
+        return PartialScaleOutDecision(
+            should_scale_out=True,
+            close_qty=close_qty,
+            remaining_qty=remaining_qty,
+            new_stop_loss=new_sl,
+            locked_r=1.0,
+            reason=(
+                f"SHORT +1.0R partial scale-out triggered: closed {frac * 100:.0f}% qty "
+                f"and locked SL to {new_sl:.5f} (+0.05R breakeven)."
+            ),
+        )

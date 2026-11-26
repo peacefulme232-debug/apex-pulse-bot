@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -9,12 +10,17 @@ from typing import Any, Literal, Optional
 
 from fastapi import Body, Depends, FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.brokers.bybit_broker import BybitBrokerError
+from app.brokers.forex_deriv import DerivBrokerError
+from app.brokers.forex_oanda import OandaBrokerError
 from app.brokers.paper_sim import INITIAL_BYBIT_BALANCE, INITIAL_FOREX_BALANCE, PaperSimBroker
 from app.config import settings
 from app.database import SessionLocal, create_db_engine, get_db, init_db
+from app.engine.backtester import Backtester
+from app.engine.historical_data import HistoricalDataFetcher
 from app.engine.runner import BotRunner
 from app.engine.summarizer import BotSummarizer
 from app.models import BotState, EquitySnapshot, StrategyConfig, SystemLog, Trade
@@ -33,6 +39,17 @@ class KillSwitchRequest(BaseModel):
     """Optional payload for activating the emergency kill switch."""
 
     reason: Optional[str] = None
+
+
+class BacktestRequest(BaseModel):
+    """Validated payload for running an on-demand zero-lookahead backtest."""
+
+    symbol: str = Field(default="BTCUSDT", min_length=2, max_length=24)
+    interval: Literal["15m", "1h", "4h", "1d"] = "1h"
+    days: int = Field(default=60, ge=7, le=180)
+    starting_balance: float = Field(default=10000.0, ge=100.0, le=1000000.0)
+    enable_partial_tp: bool = True
+    enable_confluence: bool = True
 
 
 def _ensure_bot_state(db: Session, broker: PaperSimBroker) -> BotState:
@@ -387,6 +404,118 @@ def create_app(database_url: Optional[str] = None) -> FastAPI:
             "status": "ok",
             "kill_switch_active": False,
             "is_running": True,
+        }
+
+    @fastapi_app.post("/api/backtest/run")
+    async def run_backtest(payload: BacktestRequest) -> dict[str, Any]:
+        """Run a zero-lookahead historical backtest off the async event loop."""
+        symbol = payload.symbol.strip()
+
+        def _execute_backtest() -> dict[str, Any]:
+            fetcher = HistoricalDataFetcher()
+            try:
+                df, source = fetcher.fetch(
+                    symbol=symbol,
+                    interval=payload.interval,
+                    days=payload.days,
+                )
+            finally:
+                fetcher.close()
+            engine = Backtester()
+            result = engine.run(
+                df=df,
+                symbol=symbol,
+                interval=payload.interval,
+                starting_balance=payload.starting_balance,
+                enable_partial_tp=payload.enable_partial_tp,
+                enable_confluence=payload.enable_confluence,
+                data_source=source,
+            )
+            return result.to_dict()
+
+        return await asyncio.to_thread(_execute_backtest)
+
+    @fastapi_app.get("/api/chart/{symbol}")
+    def get_chart_data(
+        symbol: str,
+        market: Optional[Literal["BYBIT", "FOREX"]] = Query(default=None),
+        interval: Literal["15m", "1h", "4h"] = Query(default="15m"),
+        limit: int = Query(default=150, ge=20, le=500),
+        db: Session = Depends(db_dependency),
+    ) -> dict[str, Any]:
+        """Return ascending deduplicated OHLCV candles and any active open trade levels for symbol."""
+        _ensure_bot_state(db, broker)
+        cleaned_symbol = symbol.strip()
+        resolved_market = market or ("FOREX" if "_" in cleaned_symbol else "BYBIT")
+        source = "PAPER_SIM"
+        df = None
+
+        if resolved_market == "BYBIT" and bot_runner.bybit_router.is_demo_active():
+            try:
+                df = bot_runner.bybit_router.get_broker().get_ohlcv(
+                    cleaned_symbol, interval=interval, limit=limit
+                )
+                source = "BYBIT_DEMO"
+            except BybitBrokerError:
+                df = None
+        elif resolved_market == "FOREX" and bot_runner.forex_router.is_cloud_active():
+            try:
+                df = bot_runner.forex_router.get_broker().get_ohlcv(
+                    cleaned_symbol, interval=interval, limit=limit
+                )
+                source = "FOREX_CLOUD"
+            except (OandaBrokerError, DerivBrokerError):
+                df = None
+
+        if df is None or df.empty:
+            df = broker.get_ohlcv(cleaned_symbol, interval=interval, limit=limit)
+            source = "PAPER_SIM"
+
+        candles_by_time: dict[int, dict[str, Any]] = {}
+        for _, row in df.iterrows():
+            ts = row["timestamp"]
+            if hasattr(ts, "timestamp"):
+                epoch_sec = int(ts.timestamp())
+            else:
+                epoch_sec = int(datetime.fromisoformat(str(ts)).timestamp())
+            candles_by_time[epoch_sec] = {
+                "time": epoch_sec,
+                "open": float(row["open"]),
+                "high": float(row["high"]),
+                "low": float(row["low"]),
+                "close": float(row["close"]),
+                "volume": float(row.get("volume", 0.0)),
+            }
+
+        candles = [candles_by_time[t] for t in sorted(candles_by_time.keys())]
+
+        open_trade_row = (
+            db.query(Trade)
+            .filter(Trade.status == "OPEN", Trade.symbol == cleaned_symbol)
+            .order_by(Trade.opened_at.desc())
+            .first()
+        )
+        open_trade: Optional[dict[str, Any]] = None
+        if open_trade_row is not None:
+            open_trade = {
+                "id": open_trade_row.id,
+                "symbol": open_trade_row.symbol,
+                "side": open_trade_row.side,
+                "strategy_name": open_trade_row.strategy_name,
+                "entry_price": float(open_trade_row.entry_price),
+                "stop_loss": float(open_trade_row.stop_loss),
+                "take_profit": float(open_trade_row.take_profit),
+                "qty": float(open_trade_row.qty),
+                "partial_tp_taken": bool(open_trade_row.partial_tp_taken),
+            }
+
+        return {
+            "symbol": cleaned_symbol,
+            "market": resolved_market,
+            "interval": interval,
+            "source": source,
+            "candles": candles,
+            "open_trade": open_trade,
         }
 
     return fastapi_app

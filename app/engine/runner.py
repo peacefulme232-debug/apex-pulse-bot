@@ -138,6 +138,70 @@ class BotRunner:
             )
         )
 
+    def _apply_partial_scale_outs(self, db: Session) -> None:
+        """Apply +1.0R partial take-profit scale-out to open positions when enabled."""
+        if not settings.PARTIAL_TP_ENABLED:
+            return
+
+        open_trades = db.query(Trade).filter(Trade.status == "OPEN").all()
+        for trade in open_trades:
+            if trade.partial_tp_taken:
+                continue
+            initial_risk = self._initial_risks.setdefault(
+                trade.id,
+                abs(float(trade.entry_price) - float(trade.stop_loss)),
+            )
+            decision = self.risk_manager.evaluate_partial_scale_out(
+                side=trade.side,
+                entry_price=float(trade.entry_price),
+                current_price=float(trade.current_price),
+                current_sl=float(trade.stop_loss),
+                initial_risk=initial_risk,
+                current_qty=float(trade.qty),
+                partial_already_taken=bool(trade.partial_tp_taken),
+            )
+            if not decision.should_scale_out:
+                continue
+
+            decimals = int(SYMBOL_SPECS.get(trade.symbol, {"decimals": 2})["decimals"])
+            rounded_sl = round(decision.new_stop_loss, decimals)
+            direction = 1.0 if trade.side.upper() == "LONG" else -1.0
+            partial_pnl = round(
+                (float(trade.current_price) - float(trade.entry_price)) * decision.close_qty * direction,
+                2,
+            )
+            remaining_pnl, _ = self.broker._calc_pnl(
+                trade.side,
+                float(trade.entry_price),
+                float(trade.current_price),
+                decision.remaining_qty,
+            )
+
+            if trade.initial_qty is None:
+                trade.initial_qty = float(trade.qty)
+            trade.qty = round(decision.remaining_qty, 6)
+            trade.partial_tp_taken = True
+            trade.realized_partial_pnl_usd = round(float(trade.realized_partial_pnl_usd or 0.0) + partial_pnl, 2)
+            trade.stop_loss = rounded_sl
+            trade.pnl_usd = round(trade.realized_partial_pnl_usd + remaining_pnl, 2)
+
+            if trade.market == "BYBIT" and self.bybit_router.is_demo_active():
+                try:
+                    self.bybit_router.get_broker().update_stop_loss(trade.symbol, rounded_sl)
+                except BybitBrokerError as exc:
+                    db.add(SystemLog(level="WARN", source="BybitBroker", message=f"Partial scale-out SL sync skipped: {exc}"))
+
+            db.add(
+                SystemLog(
+                    level="INFO",
+                    source="RiskManager",
+                    message=(
+                        f"+1.0R Partial Scale-Out on {trade.symbol} #{trade.id} ({trade.side}): "
+                        f"locked ${partial_pnl:+.2f} on 50% qty, runner SL moved to {rounded_sl}."
+                    ),
+                )
+            )
+
     def _apply_trailing_stops(self, db: Session) -> None:
         """Apply RiskManager trailing SL logic to all currently open trades."""
         open_trades = db.query(Trade).filter(Trade.status == "OPEN").all()
@@ -212,7 +276,8 @@ class BotRunner:
                 for closed_trade in newly_closed_losses:
                     self._last_loss_tick[closed_trade.symbol] = self._tick_count
 
-            # Tighten trailing stops on surviving open trades
+            # Lock +1.0R partial scale-out profits, then tighten trailing stops on surviving open trades
+            self._apply_partial_scale_outs(db)
             self._apply_trailing_stops(db)
 
             starting_equity = INITIAL_BYBIT_BALANCE + INITIAL_FOREX_BALANCE
