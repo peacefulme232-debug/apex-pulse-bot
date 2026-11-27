@@ -140,6 +140,22 @@ class BrainConfigPatchRequest(BaseModel):
     reset_circuit_breaker: Optional[bool] = None
 
 
+class WalkForwardRequest(BaseModel):
+    """Validated payload for running an out-of-sample Walk-Forward validation."""
+
+    symbol: str = Field(min_length=3, max_length=32)
+    market: Optional[Literal["bybit", "forex"]] = None
+    starting_capital: Decimal = Field(default=Decimal("20.00"), gt=Decimal("0"))
+    strategies: Optional[list[str]] = None
+    folds: Literal[3, 5] = 3
+    leverage: Optional[int] = Field(default=None, ge=1, le=2000)
+    profile: Optional[str] = None
+    realism_enabled: bool = True
+    min_confluence_score: int = Field(default=75, ge=65, le=90)
+    max_fee_drag_pct: float = Field(default=15.0, gt=0.0, le=50.0)
+    days: int = Field(default=60, ge=14, le=365)
+
+
 def _ensure_bot_state(db: Session, broker: PaperSimBroker) -> BotState:
     state = db.query(BotState).first()
     if state is None:
@@ -906,6 +922,58 @@ def create_app(database_url: Optional[str] = None) -> FastAPI:
         _ensure_bot_state(db, broker)
         updates = payload.model_dump(exclude_none=True)
         return bot_runner.update_brain_config(db, updates)
+
+    @fastapi_app.post("/api/strategy-lab/walk-forward", dependencies=[Depends(require_dashboard_auth)])
+    async def run_walk_forward_validation(payload: WalkForwardRequest) -> dict[str, Any]:
+        """Run a zero-lookahead Walk-Forward out-of-sample validation with real exchange friction."""
+        from app.services.walk_forward import WalkForwardEngine
+
+        symbol = payload.symbol.strip().upper()
+        inferred_market = payload.market or ("forex" if "_" in symbol else "bybit")
+
+        def _execute_walk_forward() -> dict[str, Any]:
+            fetcher = HistoricalDataFetcher()
+            try:
+                df, source = fetcher.fetch(
+                    symbol=symbol,
+                    interval="1h",
+                    days=payload.days,
+                )
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Upstream market data unavailable for {symbol}: {exc}",
+                ) from exc
+            finally:
+                fetcher.close()
+
+            if df is None or len(df) < 60:
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Insufficient historical H1 candles for {symbol} walk-forward validation.",
+                )
+
+            wf_engine = WalkForwardEngine()
+            try:
+                result = wf_engine.run(
+                    candles_h1=df,
+                    symbol=symbol,
+                    market=inferred_market,
+                    starting_capital=payload.starting_capital,
+                    strategies=payload.strategies,
+                    folds=payload.folds,
+                    leverage=payload.leverage,
+                    profile=payload.profile,
+                    realism_enabled=payload.realism_enabled,
+                    min_confluence_score=payload.min_confluence_score,
+                    max_fee_drag_pct=payload.max_fee_drag_pct,
+                    data_source=source,
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            return result.to_dict()
+
+        return await asyncio.to_thread(_execute_walk_forward)
 
     return fastapi_app
 
