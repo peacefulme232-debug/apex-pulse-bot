@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal, Optional
 
@@ -23,7 +24,7 @@ from app.engine.backtester import Backtester
 from app.engine.historical_data import HistoricalDataFetcher
 from app.engine.runner import BotRunner
 from app.engine.summarizer import BotSummarizer
-from app.models import BotState, EquitySnapshot, StrategyConfig, SystemLog, Trade
+from app.models import BotState, EquitySnapshot, StrategyConfig, SystemLog, Trade, WalletTransaction
 from app.security import (
     clear_session_cookie,
     extract_client_ip,
@@ -35,6 +36,18 @@ from app.security import (
     set_session_cookie,
     verify_cron_secret,
     verify_pin,
+)
+from app.services.realism_engine import ZERO, ensure_utc, q6, to_decimal
+from app.services.wallet_service import (
+    WalletError,
+    build_wallet_summary,
+    compute_daily_pnl_isolated,
+    execute_leave_balance,
+    execute_reset_challenge,
+    execute_transfer,
+    list_execution_rejections,
+    list_wallet_transactions,
+    update_wallet_settings,
 )
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
@@ -68,6 +81,49 @@ class BacktestRequest(BaseModel):
     starting_balance: float = Field(default=10000.0, ge=100.0, le=1000000.0)
     enable_partial_tp: bool = True
     enable_confluence: bool = True
+
+
+class WalletTransferRequest(BaseModel):
+    """Payload for manual transfers between Trading, Vault, and External rails."""
+
+    market: Literal["bybit", "forex"]
+    tx_type: Literal["TRADING_TO_VAULT", "VAULT_TO_TRADING", "TRADING_TO_EXTERNAL", "EXTERNAL_TO_TRADING"]
+    amount: Decimal = Field(gt=Decimal("0"))
+    network: str = Field(default="INTERNAL")
+    note: str = Field(default="", max_length=256)
+
+
+class LeaveBalanceRequest(BaseModel):
+    """Payload for 1-click Withdraw Excess & Leave $X ($20 Challenge)."""
+
+    market: Literal["bybit", "forex", "all"] = "all"
+    target_active_balance: Decimal = Field(gt=Decimal("0"))
+    network: str = Field(default="INTERNAL")
+    split_mode: Literal["equal", "proportional", "bybit_only", "forex_only"] = "equal"
+    note: str = Field(default="", max_length=256)
+
+
+class ResetChallengeRequest(BaseModel):
+    """Payload for clean-slate challenge reset (active=target, vault=0)."""
+
+    market: Literal["bybit", "forex", "all"] = "all"
+    target_active_balance: Decimal = Field(gt=Decimal("0"))
+    note: str = Field(default="", max_length=256)
+
+
+class WalletSettingsPatchRequest(BaseModel):
+    """Payload for updating auto-sweep and realism/leverage settings for a market wallet."""
+
+    market: Literal["bybit", "forex"]
+    account_profile: Optional[str] = None
+    realism_enabled: Optional[bool] = None
+    forex_leverage: Optional[int] = Field(default=None, ge=1, le=2000)
+    bybit_leverage: Optional[int] = Field(default=None, ge=1, le=100)
+    allow_min_lot_override: Optional[bool] = None
+    auto_sweep_enabled: Optional[bool] = None
+    auto_sweep_base_capital: Optional[Decimal] = Field(default=None, ge=Decimal("0"))
+    auto_sweep_threshold: Optional[Decimal] = Field(default=None, gt=Decimal("0"))
+    auto_sweep_network: Optional[str] = None
 
 
 def _ensure_bot_state(db: Session, broker: PaperSimBroker) -> BotState:
@@ -274,21 +330,38 @@ def create_app(database_url: Optional[str] = None) -> FastAPI:
         state = _ensure_bot_state(db, broker)
         balances = broker.get_balance(db=db)
 
+        bybit_wallet = broker.get_wallet_account(db, "bybit")
+        forex_wallet = broker.get_wallet_account(db, "forex")
+
         if market == "BYBIT":
             selected_equity = balances["bybit_equity"]
-            starting_equity = INITIAL_BYBIT_BALANCE
+            baseline_dec = to_decimal(bybit_wallet.equity_baseline_day)
+            fallback_cap = to_decimal(bybit_wallet.active_balance)
             active_regime = state.active_regime_bybit
         elif market == "FOREX":
             selected_equity = balances["forex_equity"]
-            starting_equity = INITIAL_FOREX_BALANCE
+            baseline_dec = to_decimal(forex_wallet.equity_baseline_day)
+            fallback_cap = to_decimal(forex_wallet.active_balance)
             active_regime = state.active_regime_forex
         else:
             selected_equity = balances["total_equity"]
-            starting_equity = INITIAL_BYBIT_BALANCE + INITIAL_FOREX_BALANCE
+            baseline_dec = q6(
+                to_decimal(bybit_wallet.equity_baseline_day)
+                + to_decimal(forex_wallet.equity_baseline_day)
+            )
+            fallback_cap = q6(
+                to_decimal(bybit_wallet.active_balance)
+                + to_decimal(forex_wallet.active_balance)
+            )
             active_regime = f"{state.active_regime_bybit} / {state.active_regime_forex}"
 
-        daily_pnl_usd = round(selected_equity - starting_equity, 2)
-        daily_pnl_pct = round((daily_pnl_usd / starting_equity) * 100.0, 2) if starting_equity else 0.0
+        daily_pnl_usd_dec, daily_pnl_pct_dec = compute_daily_pnl_isolated(
+            current_active_equity=to_decimal(selected_equity),
+            equity_baseline_day=baseline_dec,
+            fallback_capital=fallback_cap,
+        )
+        daily_pnl_usd = float(round(daily_pnl_usd_dec, 2))
+        daily_pnl_pct = float(round(daily_pnl_pct_dec, 2))
         daily_loss_used_pct = round(max(0.0, -daily_pnl_pct), 2)
 
         open_q = db.query(Trade).filter(Trade.status == "OPEN")
@@ -315,7 +388,26 @@ def create_app(database_url: Optional[str] = None) -> FastAPI:
         )
         snapshots.reverse()
 
+        # Fetch wallet cashflow events to compute Cash-Flow Adjusted Cumulative Trading PnL series
+        tx_q = db.query(WalletTransaction).order_by(WalletTransaction.created_at.asc())
+        if market == "BYBIT":
+            tx_q = tx_q.filter(WalletTransaction.market == "bybit")
+        elif market == "FOREX":
+            tx_q = tx_q.filter(WalletTransaction.market == "forex")
+        wallet_txs = tx_q.all()
+
         equity_curve = []
+        first_val = (
+            (
+                snapshots[0].bybit_equity
+                if market == "BYBIT"
+                else snapshots[0].forex_equity
+                if market == "FOREX"
+                else snapshots[0].total_equity
+            )
+            if snapshots
+            else 0.0
+        )
         for snap in snapshots:
             if market == "BYBIT":
                 val = snap.bybit_equity
@@ -323,6 +415,18 @@ def create_app(database_url: Optional[str] = None) -> FastAPI:
                 val = snap.forex_equity
             else:
                 val = snap.total_equity
+
+            snap_ts = ensure_utc(snap.timestamp)
+            cum_cashflow = ZERO
+            for tx in wallet_txs:
+                if tx.created_at and ensure_utc(tx.created_at) <= snap_ts:
+                    cum_cashflow += (
+                        to_decimal(tx.active_balance_after)
+                        - to_decimal(tx.active_balance_before)
+                    )
+            adjusted_equity = round(float(to_decimal(val) - cum_cashflow), 2)
+            adjusted_pnl_usd = round(adjusted_equity - round(first_val, 2), 2)
+
             equity_curve.append(
                 {
                     "timestamp": snap.timestamp.isoformat(),
@@ -330,6 +434,8 @@ def create_app(database_url: Optional[str] = None) -> FastAPI:
                     "bybit_equity": round(snap.bybit_equity, 2),
                     "forex_equity": round(snap.forex_equity, 2),
                     "value": round(val, 2),
+                    "adjusted_equity": adjusted_equity,
+                    "adjusted_pnl_usd": adjusted_pnl_usd,
                 }
             )
 
@@ -429,32 +535,33 @@ def create_app(database_url: Optional[str] = None) -> FastAPI:
         db: Session = Depends(db_dependency),
     ) -> dict[str, Any]:
         """Activate Emergency Kill Switch, close all open positions, and log CRITICAL event."""
-        state = _ensure_bot_state(db, broker)
-        reason = (
-            payload.reason
-            if payload and payload.reason
-            else "Manual Emergency Kill Switch activated from dashboard."
-        )
-
-        state.kill_switch_active = True
-        state.is_running = False
-        state.kill_switch_reason = reason
-        state.last_heartbeat = datetime.now(timezone.utc)
-
-        open_trades = db.query(Trade).filter(Trade.status == "OPEN").all()
-        closed_count = 0
-        for trade in open_trades:
-            broker.close_position(trade.id, "Emergency Kill Switch", db=db)
-            closed_count += 1
-
-        db.add(
-            SystemLog(
-                level="CRITICAL",
-                source="KillSwitch",
-                message=f"KILL SWITCH ACTIVATED: {reason} Closed {closed_count} open position(s).",
+        async with bot_runner._tick_lock:
+            state = _ensure_bot_state(db, broker)
+            reason = (
+                payload.reason
+                if payload and payload.reason
+                else "Manual Emergency Kill Switch activated from dashboard."
             )
-        )
-        db.commit()
+
+            state.kill_switch_active = True
+            state.is_running = False
+            state.kill_switch_reason = reason
+            state.last_heartbeat = datetime.now(timezone.utc)
+
+            open_trades = db.query(Trade).filter(Trade.status == "OPEN").all()
+            closed_count = 0
+            for trade in open_trades:
+                broker.close_position(trade.id, "Emergency Kill Switch", db=db)
+                closed_count += 1
+
+            db.add(
+                SystemLog(
+                    level="CRITICAL",
+                    source="KillSwitch",
+                    message=f"KILL SWITCH ACTIVATED: {reason} Closed {closed_count} open position(s).",
+                )
+            )
+            db.commit()
         await bot_runner.notifier.notify_kill_switch(reason=reason, closed_positions=closed_count)
         return {
             "status": "ok",
@@ -631,6 +738,122 @@ def create_app(database_url: Optional[str] = None) -> FastAPI:
             "health_grade": summary["health_grade"],
             "net_pnl_usd": summary["net_pnl_usd"],
         }
+
+    # ------------------------------------------------------------------
+    # Phase 2: Virtual Wallet / Vault, Withdrawal Fees, & $20 Challenge API
+    # ------------------------------------------------------------------
+
+    @fastapi_app.get("/api/wallet/summary", dependencies=[Depends(require_dashboard_auth)])
+    def get_wallet_summary(db: Session = Depends(db_dependency)) -> dict[str, Any]:
+        """Return per-market + combined balances, margin, withdrawable active, friction breakdown & reconciliation."""
+        _ensure_bot_state(db, broker)
+        return build_wallet_summary(db)
+
+    @fastapi_app.post("/api/wallet/transfer", dependencies=[Depends(require_dashboard_auth)])
+    def post_wallet_transfer(
+        payload: WalletTransferRequest,
+        db: Session = Depends(db_dependency),
+    ) -> dict[str, Any]:
+        """Execute manual transfer between Trading, Vault, and External rails with realistic fee calculation."""
+        _ensure_bot_state(db, broker)
+        try:
+            return execute_transfer(
+                db=db,
+                market=payload.market,
+                tx_type=payload.tx_type,
+                amount=payload.amount,
+                network=payload.network,
+                note=payload.note,
+            )
+        except WalletError as exc:
+            db.rollback()
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    @fastapi_app.post("/api/wallet/leave-balance", dependencies=[Depends(require_dashboard_auth)])
+    def post_wallet_leave_balance(
+        payload: LeaveBalanceRequest,
+        db: Session = Depends(db_dependency),
+    ) -> dict[str, Any]:
+        """1-Click Withdraw Excess & Leave $X ($20 / $50 / $100 Challenge). Returns 409 if open positions exist."""
+        _ensure_bot_state(db, broker)
+        try:
+            return execute_leave_balance(
+                db=db,
+                market=payload.market,
+                target_active_balance=payload.target_active_balance,
+                network=payload.network,
+                split_mode=payload.split_mode,
+                note=payload.note,
+            )
+        except WalletError as exc:
+            db.rollback()
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    @fastapi_app.post("/api/wallet/reset-challenge", dependencies=[Depends(require_dashboard_auth)])
+    def post_wallet_reset_challenge(
+        payload: ResetChallengeRequest,
+        db: Session = Depends(db_dependency),
+    ) -> dict[str, Any]:
+        """Clean-slate challenge reset: active_balance = target, vault_balance = 0."""
+        _ensure_bot_state(db, broker)
+        try:
+            return execute_reset_challenge(
+                db=db,
+                market=payload.market,
+                target_active_balance=payload.target_active_balance,
+                note=payload.note,
+            )
+        except WalletError as exc:
+            db.rollback()
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    @fastapi_app.patch("/api/wallet/settings", dependencies=[Depends(require_dashboard_auth)])
+    def patch_wallet_settings(
+        payload: WalletSettingsPatchRequest,
+        db: Session = Depends(db_dependency),
+    ) -> dict[str, Any]:
+        """Update auto-sweep, account_profile, realism_enabled, leverage, and allow_min_lot_override."""
+        _ensure_bot_state(db, broker)
+        try:
+            updates = payload.model_dump(exclude={"market"}, exclude_none=True)
+            return update_wallet_settings(db=db, market=payload.market, updates=updates)
+        except WalletError as exc:
+            db.rollback()
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    @fastapi_app.get("/api/wallet/transactions", dependencies=[Depends(require_dashboard_auth)])
+    def get_wallet_transactions(
+        market: Optional[Literal["bybit", "forex"]] = Query(default=None),
+        tx_type: Optional[str] = Query(default=None),
+        limit: int = Query(default=50, ge=1, le=200),
+        offset: int = Query(default=0, ge=0),
+        db: Session = Depends(db_dependency),
+    ) -> dict[str, Any]:
+        """Return paginated wallet transaction ledger."""
+        _ensure_bot_state(db, broker)
+        try:
+            return list_wallet_transactions(
+                db=db,
+                market=market,
+                tx_type=tx_type,
+                limit=limit,
+                offset=offset,
+            )
+        except WalletError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    @fastapi_app.get("/api/wallet/rejections", dependencies=[Depends(require_dashboard_auth)])
+    def get_wallet_rejections(
+        market: Optional[Literal["bybit", "forex"]] = Query(default=None),
+        limit: int = Query(default=50, ge=1, le=200),
+        db: Session = Depends(db_dependency),
+    ) -> dict[str, Any]:
+        """Return recent execution_rejections audit rows."""
+        _ensure_bot_state(db, broker)
+        try:
+            return list_execution_rejections(db=db, market=market, limit=limit)
+        except WalletError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
     return fastapi_app
 

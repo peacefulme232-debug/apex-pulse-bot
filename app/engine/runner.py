@@ -268,6 +268,19 @@ class BotRunner:
             trade.stop_loss = rounded_sl
             trade.pnl_usd = round(trade.realized_partial_pnl_usd + remaining_pnl, 2)
 
+            # Credit realized partial profit to wallet active_balance so close_position delta stays exact
+            from app.services.realism_engine import apply_negative_balance_protection, calculate_net_pnl, q6, to_decimal
+
+            wallet = self.broker.get_wallet_account(db, trade.market)
+            wallet.active_balance = apply_negative_balance_protection(wallet.active_balance, partial_pnl)
+            trade.gross_pnl = q6(to_decimal(trade.realized_partial_pnl_usd) + to_decimal(remaining_pnl))
+            trade.net_pnl = calculate_net_pnl(
+                trade.gross_pnl,
+                trade.entry_fee,
+                trade.exit_fee,
+                trade.funding_or_swap_fee,
+            )
+
             if trade.market == "BYBIT" and self.bybit_router.is_demo_active():
                 try:
                     self.bybit_router.get_broker().update_stop_loss(trade.symbol, rounded_sl)
@@ -395,8 +408,24 @@ class BotRunner:
             self._apply_partial_scale_outs(db)
             self._apply_trailing_stops(db)
 
-            starting_equity = INITIAL_BYBIT_BALANCE + INITIAL_FOREX_BALANCE
-            daily_pnl_pct = ((balances["total_equity"] - starting_equity) / starting_equity) * 100.0
+            from app.services.realism_engine import q6, to_decimal
+            from app.services.wallet_service import compute_daily_pnl_isolated
+
+            bybit_wallet = self.broker.get_wallet_account(db, "bybit")
+            forex_wallet = self.broker.get_wallet_account(db, "forex")
+            total_baseline = q6(
+                to_decimal(bybit_wallet.equity_baseline_day)
+                + to_decimal(forex_wallet.equity_baseline_day)
+            )
+            total_active = q6(
+                to_decimal(bybit_wallet.active_balance) + to_decimal(forex_wallet.active_balance)
+            )
+            _daily_usd, daily_pnl_pct_dec = compute_daily_pnl_isolated(
+                current_active_equity=to_decimal(balances["total_equity"]),
+                equity_baseline_day=total_baseline,
+                fallback_capital=total_active,
+            )
+            daily_pnl_pct = float(daily_pnl_pct_dec)
 
             if daily_pnl_pct <= -abs(settings.MAX_DAILY_LOSS_PCT):
                 reason = (
@@ -486,19 +515,34 @@ class BotRunner:
                     if symbol in self._last_loss_tick
                     else None
                 )
+                market_wallet = self.broker.get_wallet_account(db, spec["market"])
+                active_balance_only = float(market_wallet.active_balance)
+
                 decision = self.risk_manager.approve_trade(
                     side=signal.action,
                     symbol=symbol,
                     entry_price=signal.entry_price,
                     stop_loss=signal.stop_loss,
                     take_profit=signal.take_profit,
-                    equity=balances["total_equity"],
+                    equity=active_balance_only,
                     daily_pnl_pct=daily_pnl_pct,
                     open_positions=open_positions,
                     candles_since_last_loss=candles_since_loss,
                 )
 
                 if decision.trigger_kill_switch:
+                    self.broker.log_execution_rejection(
+                        db=db,
+                        market=spec["market"],
+                        symbol=symbol,
+                        side="LONG" if signal.action == "BUY" else "SHORT",
+                        reason_code="DAILY_LOSS_LOCKED",
+                        requested_qty=0,
+                        required_min_qty=0,
+                        required_margin=0,
+                        available_free_margin=market_wallet.active_balance,
+                        details=decision.rejection_reason or "Daily loss limit breached.",
+                    )
                     self._engage_kill_switch(
                         db,
                         state,
@@ -510,12 +554,38 @@ class BotRunner:
                 if decision.approved:
                     decimals = int(spec["decimals"])
                     order_side = "LONG" if signal.action == "BUY" else "SHORT"
+                    final_qty = round(decision.qty, 6)
+
+                    if market_wallet.realism_enabled:
+                        sizing = self.broker.size_and_validate_order(
+                            db=db,
+                            symbol=symbol,
+                            side=order_side,
+                            entry_price=signal.entry_price,
+                            stop_loss=signal.stop_loss,
+                            max_risk_per_trade_pct=self.risk_manager.max_risk_per_trade_pct,
+                            order_entry_type="MARKET",
+                        )
+                        if not sizing.approved:
+                            db.add(
+                                SystemLog(
+                                    level="WARN",
+                                    source="RealismEngine",
+                                    message=(
+                                        f"Order rejected for {symbol} ({order_side}) "
+                                        f"[{sizing.reason_code}]: {sizing.details}"
+                                    ),
+                                )
+                            )
+                            continue
+                        final_qty = float(sizing.qty)
+
                     if spec["market"] == "BYBIT" and self.bybit_router.is_demo_active():
                         try:
                             self.bybit_router.get_broker().place_order(
                                 symbol=symbol,
                                 side=order_side,
-                                qty=round(decision.qty, 6),
+                                qty=final_qty,
                                 stop_loss=round(signal.stop_loss, decimals),
                                 take_profit=round(signal.take_profit, decimals),
                                 strategy_name=signal.strategy_name,
@@ -530,7 +600,7 @@ class BotRunner:
                             self.forex_router.get_broker().place_order(
                                 symbol=symbol,
                                 side=order_side,
-                                qty=round(decision.qty, 6),
+                                qty=final_qty,
                                 stop_loss=round(signal.stop_loss, decimals),
                                 take_profit=round(signal.take_profit, decimals),
                                 strategy_name=signal.strategy_name,
@@ -543,7 +613,7 @@ class BotRunner:
                     created = self.broker.place_order(
                         symbol=symbol,
                         side=order_side,
-                        qty=round(decision.qty, 6),
+                        qty=final_qty,
                         stop_loss=round(signal.stop_loss, decimals),
                         take_profit=round(signal.take_profit, decimals),
                         strategy_name=signal.strategy_name,
@@ -560,7 +630,7 @@ class BotRunner:
                                 "symbol": symbol,
                                 "side": order_side,
                                 "market": spec["market"],
-                                "qty": round(decision.qty, 6),
+                                "qty": final_qty,
                                 "entry_price": float(created["entry_price"]),
                                 "stop_loss": round(signal.stop_loss, decimals),
                                 "take_profit": round(signal.take_profit, decimals),

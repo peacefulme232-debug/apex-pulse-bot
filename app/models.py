@@ -1,9 +1,10 @@
 """SQLAlchemy 2.x ORM models for trades, equity, bot state, strategies, and logs."""
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text
+from sqlalchemy import Boolean, Date, DateTime, Float, Integer, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -39,6 +40,151 @@ class Trade(Base):
     realized_partial_pnl_usd: Mapped[float] = mapped_column(Float, default=0.0)
     opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Phase 1 Realism Engine columns (exact Decimal precision)
+    order_entry_type: Mapped[str] = mapped_column(String(16), default="MARKET")
+    order_exit_type: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    requested_entry_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(18, 8, asdecimal=True), nullable=True)
+    filled_entry_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(18, 8, asdecimal=True), nullable=True)
+    requested_exit_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(18, 8, asdecimal=True), nullable=True)
+    filled_exit_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(18, 8, asdecimal=True), nullable=True)
+    initial_margin: Mapped[Decimal] = mapped_column(
+        Numeric(18, 6, asdecimal=True), default=Decimal("0.000000")
+    )
+    maintenance_margin: Mapped[Decimal] = mapped_column(
+        Numeric(18, 6, asdecimal=True), default=Decimal("0.000000")
+    )
+    liquidation_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(18, 8, asdecimal=True), nullable=True)
+    gross_pnl: Mapped[Decimal] = mapped_column(
+        Numeric(18, 6, asdecimal=True), default=Decimal("0.000000")
+    )
+    entry_fee: Mapped[Decimal] = mapped_column(
+        Numeric(18, 6, asdecimal=True), default=Decimal("0.000000")
+    )
+    exit_fee: Mapped[Decimal] = mapped_column(
+        Numeric(18, 6, asdecimal=True), default=Decimal("0.000000")
+    )
+    spread_cost: Mapped[Decimal] = mapped_column(
+        Numeric(18, 6, asdecimal=True), default=Decimal("0.000000")
+    )
+    slippage_cost: Mapped[Decimal] = mapped_column(
+        Numeric(18, 6, asdecimal=True), default=Decimal("0.000000")
+    )
+    funding_or_swap_fee: Mapped[Decimal] = mapped_column(
+        Numeric(18, 6, asdecimal=True), default=Decimal("0.000000")
+    )
+    net_pnl: Mapped[Decimal] = mapped_column(
+        Numeric(18, 6, asdecimal=True), default=Decimal("0.000000")
+    )
+    last_funding_applied_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_swap_applied_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+
+
+class WalletAccount(Base):
+    """Per-market wallet account (one row per market: 'bybit', 'forex') with realism & sweep settings."""
+
+    __tablename__ = "wallet_accounts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    market: Mapped[str] = mapped_column(String(16), unique=True, index=True)  # bybit | forex
+    seed_capital: Mapped[Decimal] = mapped_column(
+        Numeric(18, 6, asdecimal=True), default=Decimal("0.000000")
+    )
+    active_balance: Mapped[Decimal] = mapped_column(
+        Numeric(18, 6, asdecimal=True), default=Decimal("0.000000")
+    )
+    vault_balance: Mapped[Decimal] = mapped_column(
+        Numeric(18, 6, asdecimal=True), default=Decimal("0.000000")
+    )
+    equity_baseline_day: Mapped[Decimal] = mapped_column(
+        Numeric(18, 6, asdecimal=True), default=Decimal("0.000000")
+    )
+    cumulative_net_cashflow_day: Mapped[Decimal] = mapped_column(
+        Numeric(18, 6, asdecimal=True), default=Decimal("0.000000")
+    )
+    account_profile: Mapped[str] = mapped_column(String(32), default="bybit_vip0_linear")
+    realism_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    forex_leverage: Mapped[int] = mapped_column(Integer, default=500)
+    bybit_leverage: Mapped[int] = mapped_column(Integer, default=5)
+    allow_min_lot_override: Mapped[bool] = mapped_column(Boolean, default=False)
+    auto_sweep_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    auto_sweep_base_capital: Mapped[Decimal] = mapped_column(
+        Numeric(18, 6, asdecimal=True), default=Decimal("20.000000")
+    )
+    auto_sweep_threshold: Mapped[Decimal] = mapped_column(
+        Numeric(18, 6, asdecimal=True), default=Decimal("50.000000")
+    )
+    auto_sweep_network: Mapped[str] = mapped_column(String(32), default="INTERNAL")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
+class WalletTransaction(Base):
+    """Immutable ledger of deposits, withdrawals, sweeps, and transfers per market."""
+
+    __tablename__ = "wallet_transactions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    market: Mapped[str] = mapped_column(String(16), index=True)  # bybit | forex
+    tx_type: Mapped[str] = mapped_column(String(32))
+    network: Mapped[str] = mapped_column(String(32), default="INTERNAL")
+    gross_amount: Mapped[Decimal] = mapped_column(
+        Numeric(18, 6, asdecimal=True), default=Decimal("0.000000")
+    )
+    network_fee: Mapped[Decimal] = mapped_column(
+        Numeric(18, 6, asdecimal=True), default=Decimal("0.000000")
+    )
+    fx_spread_fee: Mapped[Decimal] = mapped_column(
+        Numeric(18, 6, asdecimal=True), default=Decimal("0.000000")
+    )
+    net_amount: Mapped[Decimal] = mapped_column(
+        Numeric(18, 6, asdecimal=True), default=Decimal("0.000000")
+    )
+    active_balance_before: Mapped[Decimal] = mapped_column(
+        Numeric(18, 6, asdecimal=True), default=Decimal("0.000000")
+    )
+    active_balance_after: Mapped[Decimal] = mapped_column(
+        Numeric(18, 6, asdecimal=True), default=Decimal("0.000000")
+    )
+    vault_balance_before: Mapped[Decimal] = mapped_column(
+        Numeric(18, 6, asdecimal=True), default=Decimal("0.000000")
+    )
+    vault_balance_after: Mapped[Decimal] = mapped_column(
+        Numeric(18, 6, asdecimal=True), default=Decimal("0.000000")
+    )
+    note: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), index=True, default=utcnow
+    )
+
+
+class ExecutionRejection(Base):
+    """Audit log of orders rejected due to realism constraints (min notional, margin, risk cap, daily loss)."""
+
+    __tablename__ = "execution_rejections"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    market: Mapped[str] = mapped_column(String(16), index=True)  # bybit | forex
+    symbol: Mapped[str] = mapped_column(String(32), index=True)
+    side: Mapped[str] = mapped_column(String(8))
+    reason_code: Mapped[str] = mapped_column(String(32), index=True)
+    requested_qty: Mapped[Decimal] = mapped_column(
+        Numeric(18, 6, asdecimal=True), default=Decimal("0.000000")
+    )
+    required_min_qty: Mapped[Decimal] = mapped_column(
+        Numeric(18, 6, asdecimal=True), default=Decimal("0.000000")
+    )
+    required_margin: Mapped[Decimal] = mapped_column(
+        Numeric(18, 6, asdecimal=True), default=Decimal("0.000000")
+    )
+    available_free_margin: Mapped[Decimal] = mapped_column(
+        Numeric(18, 6, asdecimal=True), default=Decimal("0.000000")
+    )
+    details: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), index=True, default=utcnow
+    )
 
 
 class EquitySnapshot(Base):

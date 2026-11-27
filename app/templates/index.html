@@ -319,6 +319,13 @@
             </svg>
             <span class="sb-label truncate">Strategy Lab</span>
           </button>
+
+          <button type="button" data-view="wallet" onclick="setView('wallet'); closeMobileDrawer();" class="sb-nav-btn view-tab w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs font-medium transition">
+            <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M21 12a2.25 2.25 0 00-2.25-2.25H15a3 3 0 11-6 0H5.25A2.25 2.25 0 003 12m18 0v6a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 18v-6m18 0V9M3 12V9m18 0a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 9m18 0V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v3" />
+            </svg>
+            <span class="sb-label truncate">Wallet &amp; Vault</span>
+          </button>
         </nav>
       </div>
 
@@ -483,10 +490,11 @@
     <main class="flex-1 w-full max-w-[1360px] mx-auto px-3 sm:px-5 lg:px-7 pt-3 lg:pt-6 pb-20 min-w-0">
       <!-- Mobile Non-Sticky Slim Segmented Pill Strip (Scrolls naturally out of the way) -->
       <div id="mobile-nav-strip" class="lg:hidden mb-3.5 space-y-2">
-        <div class="grid grid-cols-3 gap-1 p-1 rounded-xl bg-white/[0.03] border border-white/[0.07]">
+        <div class="grid grid-cols-4 gap-1 p-1 rounded-xl bg-white/[0.03] border border-white/[0.07]">
           <button type="button" data-view="terminal" onclick="setView('terminal')" class="mobile-view-tab py-1.5 rounded-lg text-xs font-semibold transition text-center">Live</button>
           <button type="button" data-view="summarizer" onclick="setView('summarizer')" class="mobile-view-tab py-1.5 rounded-lg text-xs font-semibold transition text-center">Summary</button>
           <button type="button" data-view="lab" onclick="setView('lab')" class="mobile-view-tab py-1.5 rounded-lg text-xs font-semibold transition text-center">Lab</button>
+          <button type="button" data-view="wallet" onclick="setView('wallet')" class="mobile-view-tab py-1.5 rounded-lg text-xs font-semibold transition text-center">Wallet</button>
         </div>
         <div class="grid grid-cols-3 gap-1 p-1 rounded-xl bg-white/[0.025] border border-white/[0.06]">
           <button type="button" data-market="ALL" onclick="setMarket('ALL')" class="mobile-market-tab py-1 rounded-lg text-[11px] font-mono font-semibold transition text-center">All</button>
@@ -510,11 +518,20 @@
       <div id="view-terminal" class="space-y-4">
         <!-- 12-Column Bento KPI Grid -->
         <section class="grid grid-cols-2 lg:grid-cols-12 gap-3.5 sm:gap-4">
-          <!-- Total Equity -->
+          <!-- Total Equity (Active Trading + Protected Vault Pill + Margin Health Pill) -->
           <div class="glass-card rounded-2xl p-3.5 sm:p-4 col-span-2 lg:col-span-3">
-            <p class="text-[10px] font-mono font-semibold uppercase tracking-wider text-zinc-400">Total Equity</p>
+            <div class="flex items-center justify-between gap-2">
+              <p class="text-[10px] font-mono font-semibold uppercase tracking-wider text-zinc-400">Active Trading Equity</p>
+              <span id="kpi-margin-pill" class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-mono bg-white/[0.05] text-zinc-300 border border-white/[0.08] whitespace-nowrap tabular-nums" title="Free Margin &amp; Margin Level">
+                Free $0 · ML —
+              </span>
+            </div>
             <p id="kpi-equity" class="mt-1.5 kpi-value-lg font-bold font-mono tracking-tight text-white">$20,000.00</p>
             <p id="kpi-equity-split" class="mt-1 text-[11px] font-mono text-zinc-400 truncate tabular-nums">Bybit $10,000 · FX $10,000</p>
+            <button type="button" onclick="setView('wallet')" id="kpi-vault-pill" class="mt-1.5 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg text-[10px] font-mono text-zinc-300 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] transition max-w-full truncate tabular-nums">
+              <span class="h-1.5 w-1.5 rounded-full bg-emerald-400/80 shrink-0"></span>
+              <span id="kpi-vault-text" class="truncate">Vault: $0.00 (Protected)</span>
+            </button>
           </div>
 
           <!-- Today's PnL -->
@@ -598,12 +615,15 @@
           <div class="lg:col-span-4 flex flex-col gap-3.5 sm:gap-4 min-w-0">
             <!-- Live Equity Curve -->
             <div class="glass-card rounded-2xl p-4 flex-1 flex flex-col">
-              <div class="flex items-center justify-between gap-2 mb-3">
+              <div class="flex flex-wrap items-center justify-between gap-2 mb-2.5">
                 <div class="min-w-0">
                   <h2 class="text-sm font-semibold text-white truncate">Live Equity Curve</h2>
-                  <p class="text-[11px] text-zinc-400 truncate">Multi-market trajectory</p>
+                  <p id="equity-curve-subtitle" class="text-[11px] text-zinc-400 truncate">Cash-flow adjusted trading PnL</p>
                 </div>
-                <span class="text-[10px] font-mono px-2 py-0.5 rounded-md bg-white/[0.06] text-zinc-300 border border-white/[0.08] shrink-0">3s POLL</span>
+                <div class="flex items-center gap-1 bg-white/[0.04] p-0.5 rounded-lg border border-white/[0.08] shrink-0">
+                  <button type="button" data-eq-mode="adjusted" onclick="setEquityCurveMode('adjusted')" class="eq-mode-btn px-2 py-0.5 rounded-md text-[10px] font-mono font-semibold transition bg-emerald-500/20 text-emerald-300 border border-emerald-500/35">Trading PnL (Adj)</button>
+                  <button type="button" data-eq-mode="raw" onclick="setEquityCurveMode('raw')" class="eq-mode-btn px-2 py-0.5 rounded-md text-[10px] font-mono font-medium transition text-zinc-400 border border-transparent hover:text-zinc-200">Active Balance</button>
+                </div>
               </div>
               <div class="h-48 sm:h-52 w-full flex-1">
                 <canvas id="equityChart"></canvas>
@@ -983,8 +1003,374 @@
           </section>
         </div>
       </div>
+
+      <!-- ================================================================ -->
+      <!-- VIEW 4: WALLET & VAULT + REALISM / FRICTION TELEMETRY            -->
+      <!-- ================================================================ -->
+      <div id="view-wallet" class="hidden space-y-4">
+        <!-- 1) 3 Top KPI Cards -->
+        <section class="grid grid-cols-1 md:grid-cols-3 gap-3.5 sm:gap-4">
+          <!-- Card 1: Active Trading Capital -->
+          <div class="glass-card rounded-2xl p-4 min-w-0">
+            <div class="flex items-center justify-between gap-2">
+              <p class="text-[10px] font-mono font-semibold uppercase tracking-wider text-zinc-400">Active Trading Capital</p>
+              <span id="w-margin-badge" class="px-2 py-0.5 rounded-md text-[10px] font-mono bg-white/[0.06] text-zinc-300 border border-white/[0.08] whitespace-nowrap tabular-nums">ML —</span>
+            </div>
+            <p id="w-active-total" class="mt-1.5 kpi-value-lg font-bold font-mono text-white tabular-nums">$0.00</p>
+            <p id="w-active-split" class="mt-1 text-[11px] font-mono text-zinc-400 truncate tabular-nums">Bybit $0.00 · Forex $0.00</p>
+            <div class="mt-2.5 pt-2 border-t border-white/[0.07] flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono tabular-nums">
+              <span class="text-zinc-400">Free: <span id="w-free-margin" class="text-emerald-400 font-semibold">$0.00</span></span>
+              <span class="text-zinc-400">Used: <span id="w-used-margin" class="text-amber-300 font-semibold">$0.00</span></span>
+            </div>
+          </div>
+
+          <!-- Card 2: Virtual Vault (Protected) -->
+          <div class="glass-card rounded-2xl p-4 min-w-0">
+            <div class="flex items-center justify-between gap-2">
+              <p class="text-[10px] font-mono font-semibold uppercase tracking-wider text-zinc-400">Virtual Vault (Protected)</p>
+              <span id="w-reconcile-badge" class="px-2 py-0.5 rounded-md text-[10px] font-mono font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 whitespace-nowrap">Ledger Reconciled ✓</span>
+            </div>
+            <p id="w-vault-total" class="mt-1.5 kpi-value-lg font-bold font-mono text-emerald-300 tabular-nums">$0.00</p>
+            <p id="w-vault-split" class="mt-1 text-[11px] font-mono text-zinc-400 truncate tabular-nums">Bybit $0.00 · Forex $0.00</p>
+            <div class="mt-2.5 pt-2 border-t border-white/[0.07] flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono tabular-nums">
+              <span class="text-zinc-400">Untouchable by bot sizing</span>
+              <span id="w-drift-label" class="text-zinc-500">Drift $0.00</span>
+            </div>
+          </div>
+
+          <!-- Card 3: Real-Life Friction Paid -->
+          <div class="glass-card rounded-2xl p-4 min-w-0">
+            <div class="flex items-center justify-between gap-2">
+              <p class="text-[10px] font-mono font-semibold uppercase tracking-wider text-zinc-400">Real-Life Friction Paid</p>
+              <span id="w-gross-vs-net" class="text-[10px] font-mono text-zinc-400 whitespace-nowrap tabular-nums">Gross $0 · Net $0</span>
+            </div>
+            <p id="w-friction-total" class="mt-1.5 kpi-value-lg font-bold font-mono text-amber-300 tabular-nums">$0.00</p>
+            <div class="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[10px] font-mono text-zinc-400 tabular-nums">
+              <div class="flex justify-between gap-1"><span>Trading Fees</span><span id="w-fric-trading" class="text-zinc-200">$0.00</span></div>
+              <div class="flex justify-between gap-1"><span>Spread</span><span id="w-fric-spread" class="text-zinc-200">$0.00</span></div>
+              <div class="flex justify-between gap-1"><span>Slippage</span><span id="w-fric-slip" class="text-zinc-200">$0.00</span></div>
+              <div class="flex justify-between gap-1"><span>Funding/Swap</span><span id="w-fric-funding" class="text-zinc-200">$0.00</span></div>
+              <div class="flex justify-between gap-1 col-span-2 pt-1 border-t border-white/[0.06]"><span>Withdrawal Fees</span><span id="w-fric-withdraw" class="text-amber-300">$0.00</span></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 2) Quick Micro-Account Challenge Bar -->
+        <section class="glass-card rounded-2xl p-4">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div class="min-w-0">
+              <h2 class="text-sm font-semibold text-white">Quick Micro-Account Challenge Bar</h2>
+              <p class="text-[11px] text-zinc-400">Withdraw excess profits to Vault &amp; isolate Today's PnL with 1 click.</p>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+              <button type="button" onclick="openChallengeModal('leave', 20)" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/35 hover:bg-emerald-500/30 transition whitespace-nowrap">
+                Leave $20 Challenge
+              </button>
+              <button type="button" onclick="openChallengeModal('leave', 50)" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-white/[0.06] text-zinc-200 border border-white/[0.10] hover:bg-white/[0.12] transition whitespace-nowrap">
+                Leave $50
+              </button>
+              <button type="button" onclick="openChallengeModal('leave', 100)" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-white/[0.06] text-zinc-200 border border-white/[0.10] hover:bg-white/[0.12] transition whitespace-nowrap">
+                Leave $100
+              </button>
+              <button type="button" onclick="openChallengeModal('topup', 20)" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-sky-500/15 text-sky-300 border border-sky-500/30 hover:bg-sky-500/25 transition whitespace-nowrap">
+                Top Up from Vault
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <!-- 3) Manual Transfer + Auto-Sweep Profit Skimmer (2-Col Responsive) -->
+        <section class="grid grid-cols-1 lg:grid-cols-2 gap-3.5 sm:gap-4">
+          <!-- Manual Deposit / Withdraw Panel -->
+          <div class="glass-card rounded-2xl p-4 space-y-3">
+            <div class="flex items-center justify-between gap-2">
+              <div>
+                <h2 class="text-sm font-semibold text-white">Manual Deposit / Withdraw</h2>
+                <p class="text-[11px] text-zinc-400">Move capital across Active Trading, Protected Vault &amp; External rails.</p>
+              </div>
+              <span id="wt-withdrawable-pill" class="text-[10px] font-mono px-2 py-0.5 rounded-md bg-white/[0.06] text-zinc-300 border border-white/[0.08] whitespace-nowrap tabular-nums">Max: $0.00</span>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <div>
+                <label class="block text-[10px] font-mono uppercase text-zinc-400 mb-1">Market</label>
+                <select id="wt-market" onchange="updateTransferPreview()" class="w-full px-3 py-2 rounded-xl bg-[#07090d] border border-white/[0.10] text-xs text-white focus:outline-none focus:border-emerald-500/60">
+                  <option value="bybit">Bybit (Crypto)</option>
+                  <option value="forex">Forex (MT5)</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-[10px] font-mono uppercase text-zinc-400 mb-1">Direction</label>
+                <select id="wt-direction" onchange="updateTransferPreview()" class="w-full px-3 py-2 rounded-xl bg-[#07090d] border border-white/[0.10] text-xs text-white focus:outline-none focus:border-emerald-500/60">
+                  <option value="TRADING_TO_VAULT">Trading → Vault</option>
+                  <option value="VAULT_TO_TRADING">Vault → Trading</option>
+                  <option value="TRADING_TO_EXTERNAL">Trading → External</option>
+                  <option value="EXTERNAL_TO_TRADING">External → Trading (Deposit)</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <div>
+                <label class="block text-[10px] font-mono uppercase text-zinc-400 mb-1">Amount (USD)</label>
+                <div class="flex items-center gap-1.5">
+                  <input id="wt-amount" type="number" step="0.01" min="0" placeholder="20.00" oninput="updateTransferPreview()" class="w-full min-w-0 px-3 py-2 rounded-xl bg-[#07090d] border border-white/[0.10] text-xs font-mono text-white focus:outline-none focus:border-emerald-500/60" />
+                  <button type="button" onclick="fillMaxTransferAmount()" class="px-2.5 py-2 rounded-xl text-[10px] font-mono font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/25 shrink-0 transition">MAX</button>
+                </div>
+              </div>
+              <div>
+                <label class="block text-[10px] font-mono uppercase text-zinc-400 mb-1">Network Rail</label>
+                <select id="wt-network" onchange="updateTransferPreview()" class="w-full px-3 py-2 rounded-xl bg-[#07090d] border border-white/[0.10] text-xs text-white focus:outline-none focus:border-emerald-500/60">
+                  <option value="INTERNAL">Internal ($0.00 · Min $1)</option>
+                  <option value="APTOS">Aptos USDT ($0.002 · Min $1)</option>
+                  <option value="POLYGON">Polygon USDT ($0.07 · Min $1)</option>
+                  <option value="BEP20">BEP20 USDT ($0.15 · Min $5)</option>
+                  <option value="ERC20">ERC20 USDT ($0.80 · Min $6)</option>
+                  <option value="TRC20">TRC20 USDT ($1.30 · Min $10)</option>
+                  <option value="LOCAL_BANK_NGN">Local Bank NGN ($0.50 + 0.50% · Min $10)</option>
+                  <option value="BANK_WIRE">Bank Wire ($15.00 · Min $50 Forex)</option>
+                </select>
+              </div>
+            </div>
+
+            <div id="wt-preview" class="glass-subcard rounded-xl p-2.5 text-[11px] font-mono text-zinc-300 flex flex-wrap items-center justify-between gap-2 tabular-nums">
+              <span>Fee: <strong id="wt-prev-fee" class="text-amber-300">$0.00</strong></span>
+              <span>Net: <strong id="wt-prev-net" class="text-emerald-400">$0.00</strong></span>
+              <span id="wt-prev-min" class="text-zinc-500">Min $1.00</span>
+            </div>
+
+            <button type="button" id="btn-wt-submit" onclick="submitManualTransfer()" class="w-full py-2.5 rounded-xl text-xs font-bold bg-emerald-500 hover:bg-emerald-400 text-zinc-950 transition">
+              Execute Transfer
+            </button>
+          </div>
+
+          <!-- Auto-Sweep Profit Skimmer Card -->
+          <div class="glass-card rounded-2xl p-4 space-y-3">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h2 class="text-sm font-semibold text-white">Auto-Sweep Profit Skimmer</h2>
+                <p class="text-[11px] text-zinc-400">Automatically lock excess profits into Vault on winning trade close.</p>
+              </div>
+              <select id="ws-market" onchange="syncSettingsFormsFromSummary()" class="px-2.5 py-1 rounded-lg bg-[#07090d] border border-white/[0.10] text-[11px] font-mono text-zinc-200 focus:outline-none">
+                <option value="bybit">Bybit</option>
+                <option value="forex">Forex</option>
+              </select>
+            </div>
+
+            <div class="flex items-center justify-between glass-subcard rounded-xl px-3 py-2">
+              <span class="text-xs font-medium text-zinc-200">Enable Auto-Sweep</span>
+              <label class="inline-flex items-center cursor-pointer">
+                <input id="ws-sweep-enabled" type="checkbox" onchange="updateAutoSweepPreview()" class="sr-only peer" />
+                <div class="w-10 h-5 bg-zinc-700 rounded-full peer peer-checked:bg-emerald-500 relative transition after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-5"></div>
+              </label>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+              <div>
+                <label class="block text-[10px] font-mono uppercase text-zinc-400 mb-1">Base Capital ($)</label>
+                <input id="ws-sweep-base" type="number" step="1" min="0" value="20" oninput="updateAutoSweepPreview()" class="w-full px-3 py-2 rounded-xl bg-[#07090d] border border-white/[0.10] text-xs font-mono text-white focus:outline-none focus:border-emerald-500/60" />
+              </div>
+              <div>
+                <label class="block text-[10px] font-mono uppercase text-zinc-400 mb-1">Profit Trigger (+$)</label>
+                <input id="ws-sweep-threshold" type="number" step="1" min="1" value="50" oninput="updateAutoSweepPreview()" class="w-full px-3 py-2 rounded-xl bg-[#07090d] border border-white/[0.10] text-xs font-mono text-white focus:outline-none focus:border-emerald-500/60" />
+              </div>
+              <div>
+                <label class="block text-[10px] font-mono uppercase text-zinc-400 mb-1">Sweep Network</label>
+                <select id="ws-sweep-network" onchange="updateAutoSweepPreview()" class="w-full px-3 py-2 rounded-xl bg-[#07090d] border border-white/[0.10] text-xs text-white focus:outline-none focus:border-emerald-500/60">
+                  <option value="INTERNAL">INTERNAL ($0.00)</option>
+                  <option value="BEP20">BEP20 ($0.15)</option>
+                  <option value="TRC20">TRC20 ($1.30)</option>
+                  <option value="POLYGON">POLYGON ($0.07)</option>
+                  <option value="APTOS">APTOS ($0.002)</option>
+                  <option value="ERC20">ERC20 ($0.80)</option>
+                  <option value="LOCAL_BANK_NGN">LOCAL_BANK_NGN</option>
+                  <option value="BANK_WIRE">BANK_WIRE ($15.00)</option>
+                </select>
+              </div>
+            </div>
+
+            <p id="ws-sweep-preview" class="text-[11px] text-zinc-300 bg-white/[0.03] border border-white/[0.07] rounded-xl px-3 py-2 leading-relaxed">
+              When free active balance reaches $70.00+, automatically sweep excess to Vault (Fee: $0.00 INTERNAL).
+            </p>
+
+            <button type="button" onclick="saveAutoSweepSettings()" class="w-full py-2.5 rounded-xl text-xs font-bold bg-white/[0.10] hover:bg-white/[0.16] text-white border border-white/[0.12] transition">
+              Save Auto-Sweep Settings
+            </button>
+          </div>
+        </section>
+
+        <!-- 4) Realism & Leverage Settings Card -->
+        <section class="glass-card rounded-2xl p-4 space-y-3">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 class="text-sm font-semibold text-white">Real-Life Realism &amp; Leverage Settings</h2>
+              <p class="text-[11px] text-zinc-400">Configure VIP 0 Bybit UTA rules, MT5 ECN/STP spreads, leverage, and micro-lot policy.</p>
+            </div>
+            <select id="wr-market" onchange="syncRealismFormFromSummary()" class="px-2.5 py-1 rounded-lg bg-[#07090d] border border-white/[0.10] text-[11px] font-mono text-zinc-200 focus:outline-none">
+              <option value="bybit">Bybit Settings</option>
+              <option value="forex">Forex Settings</option>
+            </select>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
+            <div class="glass-subcard rounded-xl px-3 py-2.5 flex items-center justify-between gap-2">
+              <span class="text-xs text-zinc-200">Realism Engine</span>
+              <label class="inline-flex items-center cursor-pointer shrink-0">
+                <input id="wr-realism-enabled" type="checkbox" class="sr-only peer" />
+                <div class="w-10 h-5 bg-zinc-700 rounded-full peer peer-checked:bg-emerald-500 relative transition after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-5"></div>
+              </label>
+            </div>
+
+            <div>
+              <label class="block text-[10px] font-mono uppercase text-zinc-400 mb-1">Forex Account Profile</label>
+              <select id="wr-forex-profile" class="w-full px-3 py-2 rounded-xl bg-[#07090d] border border-white/[0.10] text-xs text-white focus:outline-none">
+                <option value="mt5_raw_ecn">MT5 Raw ECN — $7/lot</option>
+                <option value="mt5_standard_stp">MT5 Standard STP — 0 Comm</option>
+              </select>
+            </div>
+
+            <div>
+              <label class="block text-[10px] font-mono uppercase text-zinc-400 mb-1">Forex Leverage</label>
+              <select id="wr-forex-lev" class="w-full px-3 py-2 rounded-xl bg-[#07090d] border border-white/[0.10] text-xs font-mono text-white focus:outline-none">
+                <option value="100">1:100</option>
+                <option value="200">1:200</option>
+                <option value="500">1:500</option>
+              </select>
+            </div>
+
+            <div>
+              <label class="block text-[10px] font-mono uppercase text-zinc-400 mb-1">Bybit Leverage (1x–20x)</label>
+              <input id="wr-bybit-lev" type="number" min="1" max="20" step="1" value="5" class="w-full px-3 py-2 rounded-xl bg-[#07090d] border border-white/[0.10] text-xs font-mono text-white focus:outline-none" />
+            </div>
+
+            <div class="glass-subcard rounded-xl px-3 py-2.5 flex items-center justify-between gap-2">
+              <span class="text-xs text-zinc-200 truncate">Min-Lot Override</span>
+              <label class="inline-flex items-center cursor-pointer shrink-0">
+                <input id="wr-min-lot-override" type="checkbox" class="sr-only peer" />
+                <div class="w-10 h-5 bg-zinc-700 rounded-full peer peer-checked:bg-amber-500 relative transition after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-5"></div>
+              </label>
+            </div>
+          </div>
+
+          <div class="flex justify-end">
+            <button type="button" onclick="saveRealismSettings()" class="px-4 py-2 rounded-xl text-xs font-bold bg-emerald-500 hover:bg-emerald-400 text-zinc-950 transition">
+              Save Realism &amp; Leverage
+            </button>
+          </div>
+        </section>
+
+        <!-- 5) Bottom Tabbed Tables: Transaction Ledger & Micro-Account Skipped Signals -->
+        <section class="glass-card rounded-2xl p-4 space-y-3">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div class="flex items-center gap-1 bg-white/[0.04] p-1 rounded-xl border border-white/[0.08]">
+              <button type="button" id="wtab-ledger-btn" onclick="setWalletTableTab('ledger')" class="px-3 py-1 rounded-lg text-xs font-semibold transition bg-emerald-500/20 text-emerald-300 border border-emerald-500/35">
+                Transaction Ledger
+              </button>
+              <button type="button" id="wtab-rejections-btn" onclick="setWalletTableTab('rejections')" class="px-3 py-1 rounded-lg text-xs font-medium transition text-zinc-400 border border-transparent hover:text-zinc-200">
+                Skipped Signals <span id="w-rej-count-pill" class="ml-1 px-1.5 py-0.2 rounded bg-white/[0.08] text-[10px] font-mono">0</span>
+              </button>
+            </div>
+            <button type="button" onclick="fetchWalletAll()" class="px-2.5 py-1 rounded-lg text-[11px] font-mono bg-white/[0.05] hover:bg-white/[0.10] text-zinc-300 border border-white/[0.08] transition">
+              Refresh
+            </button>
+          </div>
+
+          <!-- Tab 1: Transaction Ledger -->
+          <div id="wtab-ledger-panel" class="overflow-x-auto no-scrollbar">
+            <table class="w-full text-left border-collapse text-xs font-mono">
+              <thead>
+                <tr class="border-b border-white/[0.08] text-[10px] uppercase text-zinc-500">
+                  <th class="py-2 pr-3">Time</th>
+                  <th class="py-2 pr-3">Type</th>
+                  <th class="py-2 pr-3">Market</th>
+                  <th class="py-2 pr-3">Network</th>
+                  <th class="py-2 pr-3 text-right">Gross</th>
+                  <th class="py-2 pr-3 text-right">Fee</th>
+                  <th class="py-2 pr-3 text-right">Net</th>
+                  <th class="py-2 text-right">Active / Vault</th>
+                </tr>
+              </thead>
+              <tbody id="wallet-tx-tbody" class="divide-y divide-white/[0.05] text-zinc-200">
+                <tr><td colspan="8" class="py-6 text-center text-zinc-500">No wallet transactions yet.</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Tab 2: Micro-Account Skipped Signals (execution_rejections) -->
+          <div id="wtab-rejections-panel" class="hidden overflow-x-auto no-scrollbar">
+            <table class="w-full text-left border-collapse text-xs font-mono">
+              <thead>
+                <tr class="border-b border-white/[0.08] text-[10px] uppercase text-zinc-500">
+                  <th class="py-2 pr-3">Time</th>
+                  <th class="py-2 pr-3">Symbol</th>
+                  <th class="py-2 pr-3">Side</th>
+                  <th class="py-2 pr-3">Reason</th>
+                  <th class="py-2 pr-3 text-right">Req / Avail Margin</th>
+                  <th class="py-2">Details</th>
+                </tr>
+              </thead>
+              <tbody id="wallet-rej-tbody" class="divide-y divide-white/[0.05] text-zinc-200">
+                <tr><td colspan="6" class="py-6 text-center text-zinc-500">No skipped signals recorded yet.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
     </main>
   </div>
+
+  <!-- Challenge / Top-Up Confirmation Modal -->
+  <div id="wallet-challenge-modal" onclick="if (event.target === this) closeChallengeModal();" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4">
+    <div class="glass-card rounded-2xl max-w-md w-full p-5 border border-emerald-500/30 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between gap-2">
+        <h3 id="wcm-title" class="text-base font-bold text-white">Leave $20 Challenge</h3>
+        <button type="button" onclick="closeChallengeModal()" class="text-zinc-400 hover:text-white text-sm font-mono">✕</button>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+        <div>
+          <label class="block text-[10px] font-mono uppercase text-zinc-400 mb-1">Market</label>
+          <select id="wcm-market" onchange="updateChallengeModalPreview()" class="w-full px-3 py-2 rounded-xl bg-[#07090d] border border-white/[0.10] text-xs text-white focus:outline-none">
+            <option value="bybit">Bybit</option>
+            <option value="forex">Forex</option>
+            <option value="all">All Markets</option>
+          </select>
+        </div>
+        <div id="wcm-network-wrap">
+          <label class="block text-[10px] font-mono uppercase text-zinc-400 mb-1">Withdrawal Network</label>
+          <select id="wcm-network" onchange="updateChallengeModalPreview()" class="w-full px-3 py-2 rounded-xl bg-[#07090d] border border-white/[0.10] text-xs text-white focus:outline-none">
+            <option value="INTERNAL">Internal ($0.00)</option>
+            <option value="BEP20">BEP20 ($0.15)</option>
+            <option value="TRC20">TRC20 ($1.30)</option>
+            <option value="ERC20">ERC20 ($0.80)</option>
+            <option value="POLYGON">Polygon ($0.07)</option>
+            <option value="APTOS">Aptos ($0.002)</option>
+            <option value="LOCAL_BANK_NGN">Local Bank (0.5% + $0.50)</option>
+          </select>
+        </div>
+      </div>
+
+      <div>
+        <label id="wcm-amount-label" class="block text-[10px] font-mono uppercase text-zinc-400 mb-1">Target Active Balance ($)</label>
+        <input id="wcm-amount" type="number" step="0.01" min="1" value="20" oninput="updateChallengeModalPreview()" class="w-full px-3 py-2 rounded-xl bg-[#07090d] border border-white/[0.10] text-xs font-mono text-white focus:outline-none" />
+      </div>
+
+      <div class="glass-subcard rounded-xl p-3 space-y-1.5 text-xs font-mono tabular-nums">
+        <div class="flex justify-between"><span class="text-zinc-400">Withdraw Gross</span><span id="wcm-prev-gross" class="text-white">$0.00</span></div>
+        <div class="flex justify-between"><span class="text-zinc-400">Network Fee</span><span id="wcm-prev-fee" class="text-amber-300">$0.00</span></div>
+        <div class="flex justify-between"><span class="text-zinc-400">Net to Vault</span><span id="wcm-prev-net" class="text-emerald-400 font-semibold">$0.00</span></div>
+        <div class="flex justify-between pt-1.5 border-t border-white/[0.08]"><span class="text-zinc-400">New Active Balance</span><span id="wcm-prev-active" class="text-white font-bold">$20.00</span></div>
+      </div>
+
+      <div class="flex items-center justify-end gap-2">
+        <button type="button" onclick="closeChallengeModal()" class="px-3.5 py-2 rounded-xl text-xs font-semibold bg-white/[0.07] text-zinc-300 hover:bg-white/[0.12] transition">Cancel</button>
+        <button type="button" id="wcm-confirm-btn" onclick="confirmChallengeModal()" class="px-4 py-2 rounded-xl text-xs font-bold bg-emerald-500 hover:bg-emerald-400 text-zinc-950 transition">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Wallet Toast Notification -->
+  <div id="wallet-toast" class="hidden fixed bottom-5 right-5 z-50 max-w-sm px-4 py-3 rounded-2xl glass-card border text-xs font-medium shadow-2xl transition-all"></div>
 
   <!-- Notion-Style Ctrl+K / Cmd+K Quick Jump Palette -->
   <div id="quick-jump-modal" onclick="if (event.target === this) closeQuickJump();" class="hidden fixed inset-0 z-50 flex items-start justify-center pt-[12vh] bg-black/75 px-4">
@@ -1208,6 +1594,7 @@
         { label: 'Live Terminal', group: 'Workspace', hint: 'Tab', action: () => setView('terminal') },
         { label: 'Bot Summarizer', group: 'Workspace', hint: 'Tab', action: () => setView('summarizer') },
         { label: 'Strategy Lab', group: 'Workspace', hint: 'Tab', action: () => setView('lab') },
+        { label: 'Wallet & Vault', group: 'Workspace', hint: 'Tab', action: () => setView('wallet') },
         { label: 'All Markets', group: 'Market Scope', hint: 'ALL', action: () => setMarket('ALL') },
         { label: 'Bybit (Crypto)', group: 'Market Scope', hint: 'BYBIT', action: () => setMarket('BYBIT') },
         { label: 'Forex', group: 'Market Scope', hint: 'FOREX', action: () => setMarket('FOREX') },
@@ -1323,6 +1710,9 @@
 
     window.addEventListener('resize', scheduleChartResize);
 
+    let equityCurveMode = 'adjusted';
+    let lastEquityCurveData = [];
+
     /* ==================== NAVIGATION & TABS ==================== */
     function setView(view) {
       currentView = view;
@@ -1330,19 +1720,25 @@
       const termEl = document.getElementById('view-terminal');
       const sumEl = document.getElementById('view-summarizer');
       const labEl = document.getElementById('view-lab');
+      const walEl = document.getElementById('view-wallet');
 
       termEl.classList.add('hidden');
       sumEl.classList.add('hidden');
       labEl.classList.add('hidden');
+      if (walEl) walEl.classList.add('hidden');
 
       if (currentView === 'summarizer') {
         sumEl.classList.remove('hidden');
         fetchSummary();
       } else if (currentView === 'lab') {
         labEl.classList.remove('hidden');
+      } else if (currentView === 'wallet') {
+        if (walEl) walEl.classList.remove('hidden');
+        fetchWalletAll();
       } else {
         termEl.classList.remove('hidden');
         fetchDashboard();
+        fetchWalletSummary();
         fetchLiveChart();
         scheduleChartResize();
       }
@@ -1367,6 +1763,7 @@
       currentMarket = market;
       updateMarketTabs();
       fetchDashboard();
+      fetchWalletSummary();
       if (currentView === 'summarizer') {
         fetchSummary();
       }
@@ -1387,6 +1784,25 @@
       });
     }
 
+    function setEquityCurveMode(mode) {
+      equityCurveMode = mode === 'raw' ? 'raw' : 'adjusted';
+      document.querySelectorAll('.eq-mode-btn').forEach((btn) => {
+        const active = btn.dataset.eqMode === equityCurveMode;
+        btn.className = active
+          ? 'eq-mode-btn px-2 py-0.5 rounded-md text-[10px] font-mono font-semibold transition bg-emerald-500/20 text-emerald-300 border border-emerald-500/35'
+          : 'eq-mode-btn px-2 py-0.5 rounded-md text-[10px] font-mono font-medium transition text-zinc-400 border border-transparent hover:text-zinc-200';
+      });
+      const sub = document.getElementById('equity-curve-subtitle');
+      if (sub) {
+        sub.textContent = equityCurveMode === 'adjusted'
+          ? 'Cash-flow adjusted trading PnL'
+          : 'Raw active trading balance';
+      }
+      if (lastEquityCurveData.length) {
+        renderChart(lastEquityCurveData);
+      }
+    }
+
     /* ==================== CHARTS & RENDERERS ==================== */
     function initChart() {
       const canvas = document.getElementById('equityChart');
@@ -1401,7 +1817,7 @@
         data: {
           labels: [],
           datasets: [{
-            label: 'Equity ($)',
+            label: 'Trading PnL ($)',
             data: [],
             borderColor: '#10b981',
             backgroundColor: gradient,
@@ -1425,7 +1841,9 @@
               titleColor: '#a1a1aa',
               bodyColor: '#f4f4f5',
               callbacks: {
-                label: (c) => ` ${fmtUsd(c.parsed.y)}`
+                label: (c) => equityCurveMode === 'adjusted'
+                  ? ` ${fmtSignedUsd(c.parsed.y)}`
+                  : ` ${fmtUsd(c.parsed.y)}`
               }
             }
           },
@@ -1439,7 +1857,13 @@
               ticks: {
                 color: '#71717a',
                 font: { size: 10 },
-                callback: (v) => '$' + Number(v).toLocaleString('en-US')
+                callback: (v) => {
+                  const num = Number(v || 0);
+                  if (equityCurveMode === 'adjusted') {
+                    return (num >= 0 ? '+$' : '-$') + Math.abs(num).toLocaleString('en-US');
+                  }
+                  return '$' + num.toLocaleString('en-US');
+                }
               }
             }
           }
@@ -1448,14 +1872,21 @@
     }
 
     function renderChart(curve) {
+      lastEquityCurveData = Array.isArray(curve) ? curve : [];
       if (!equityChart) initChart();
       if (!equityChart) return;
-      const labels = curve.map((pt) => {
+      const labels = lastEquityCurveData.map((pt) => {
         const d = new Date(pt.timestamp);
         return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       });
-      const values = curve.map((pt) => pt.value);
+      const values = lastEquityCurveData.map((pt) => {
+        const val = equityCurveMode === 'adjusted'
+          ? Number(pt.adjusted_pnl_usd ?? 0)
+          : Number(pt.value ?? 0);
+        return Number.isFinite(val) ? val : 0;
+      });
       equityChart.data.labels = labels;
+      equityChart.data.datasets[0].label = equityCurveMode === 'adjusted' ? 'Trading PnL (Adj)' : 'Active Balance ($)';
       equityChart.data.datasets[0].data = values;
       equityChart.update('none');
     }
@@ -1499,13 +1930,59 @@
       }).join('');
     }
 
+    function formatExitTag(exitType) {
+      const raw = String(exitType || '').toUpperCase();
+      if (raw === 'TAKE_PROFIT') return { label: 'TP', cls: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' };
+      if (raw === 'STOP_LOSS') return { label: 'SL', cls: 'bg-amber-500/15 text-amber-300 border-amber-500/30' };
+      if (raw === 'LIQUIDATION') return { label: 'LIQ', cls: 'bg-rose-500/25 text-rose-300 border-rose-500/45 font-bold' };
+      if (raw === 'STOP_OUT') return { label: 'STOP-OUT', cls: 'bg-rose-500/25 text-rose-300 border-rose-500/45 font-bold' };
+      if (raw === 'LIMIT') return { label: 'LMT', cls: 'bg-sky-500/15 text-sky-300 border-sky-500/30' };
+      return { label: 'MKT', cls: 'bg-white/[0.06] text-zinc-300 border-white/[0.10]' };
+    }
+
     function renderTradeCard(t, isOpen) {
       const sideBadge = t.side === 'LONG'
         ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
         : 'bg-rose-500/15 text-rose-300 border-rose-500/30';
-      const pnlColor = t.pnl_usd >= 0 ? 'text-emerald-400' : 'text-rose-400';
+      const netVal = Number.isFinite(Number(t.net_pnl)) && (t.filled_entry_price !== null && t.filled_entry_price !== undefined)
+        ? Number(t.net_pnl)
+        : Number(t.pnl_usd || 0);
+      const grossVal = Number.isFinite(Number(t.gross_pnl)) && (t.filled_entry_price !== null && t.filled_entry_price !== undefined)
+        ? Number(t.gross_pnl)
+        : netVal;
+      const entryFee = Number(t.entry_fee || 0);
+      const exitFee = Number(t.exit_fee || 0);
+      const fundingFee = Number(t.funding_or_swap_fee || 0);
+      const spreadCost = Number(t.spread_cost || 0);
+      const slipCost = Number(t.slippage_cost || 0);
+      const totalFees = entryFee + exitFee + fundingFee;
+      const totalFriction = totalFees + spreadCost + slipCost;
+
+      const pnlColor = netVal >= 0 ? 'text-emerald-400' : 'text-rose-400';
       const priceValue = isOpen ? t.current_price : (t.exit_price ?? t.current_price);
       const priceLabel = isOpen ? 'Live' : 'Exit';
+
+      const exitTag = !isOpen ? formatExitTag(t.order_exit_type) : null;
+      const exitTagHtml = exitTag
+        ? `<span class="px-1.5 py-0.5 rounded text-[10px] font-mono border ${exitTag.cls}">${exitTag.label}</span>`
+        : '';
+
+      const frictionTooltip = `Entry Fee: $${entryFee.toFixed(4)} | Exit Fee: $${exitFee.toFixed(4)} | Funding/Swap: $${fundingFee.toFixed(4)} | Est. Spread: $${spreadCost.toFixed(4)} | Est. Slippage: $${slipCost.toFixed(4)}`;
+      const closedFrictionRow = !isOpen ? `
+        <div class="mt-2 flex flex-wrap items-center justify-between gap-2 text-[10px] font-mono tabular-nums bg-white/[0.025] border border-white/[0.06] rounded-lg px-2.5 py-1.5">
+          <span class="text-zinc-400">Gross: <strong class="text-zinc-200">${fmtSignedUsd(grossVal)}</strong></span>
+          <button type="button" onclick="this.nextElementSibling.classList.toggle('hidden')" title="${escapeHtml(frictionTooltip)}" class="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/25 hover:bg-amber-500/20 transition">
+            Friction -$${Math.abs(totalFriction).toFixed(2)} ▾
+          </button>
+          <div class="hidden w-full pt-1.5 mt-1 border-t border-white/[0.06] grid grid-cols-2 gap-x-3 gap-y-0.5 text-[10px] text-zinc-400">
+            <span>Entry Fee: <strong class="text-zinc-200">$${entryFee.toFixed(4)}</strong></span>
+            <span>Exit Fee: <strong class="text-zinc-200">$${exitFee.toFixed(4)}</strong></span>
+            <span>Funding/Swap: <strong class="text-zinc-200">$${fundingFee.toFixed(4)}</strong></span>
+            <span>Spread+Slip: <strong class="text-zinc-200">$${(spreadCost + slipCost).toFixed(4)}</strong></span>
+          </div>
+          <span class="text-zinc-400">Net: <strong class="${pnlColor}">${fmtSignedUsd(netVal)}</strong></span>
+        </div>
+      ` : '';
 
       return `
         <div class="glass-subcard rounded-xl p-3">
@@ -1514,9 +1991,10 @@
               <span class="text-sm font-bold font-mono text-white">${escapeHtml(t.symbol)}</span>
               <span class="px-1.5 py-0.5 rounded text-[10px] font-bold border ${sideBadge}">${escapeHtml(t.side)}</span>
               <span class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-white/[0.06] text-zinc-400">${escapeHtml(t.market)}</span>
+              ${exitTagHtml}
             </div>
             <div class="text-right font-mono tabular-nums shrink-0">
-              <span class="text-sm font-bold ${pnlColor}">${fmtSignedUsd(t.pnl_usd)}</span>
+              <span class="text-sm font-bold ${pnlColor}">${fmtSignedUsd(netVal)}</span>
               <span class="text-[11px] ${pnlColor} ml-1">(${t.pnl_pct >= 0 ? '+' : ''}${Number(t.pnl_pct || 0).toFixed(2)}%)</span>
             </div>
           </div>
@@ -1529,6 +2007,7 @@
             <span>SL: ${fmtPrice(t.stop_loss, t.symbol)}</span>
             <span>TP: ${fmtPrice(t.take_profit, t.symbol)}</span>
           </div>
+          ${closedFrictionRow}
           <p class="mt-2 text-[11px] text-zinc-400 leading-snug border-t border-white/[0.06] pt-1.5 break-words">${escapeHtml(t.entry_reason)}</p>
         </div>
       `;
@@ -2349,19 +2828,596 @@
       }
     }
 
+    /* ==================== PHASE 3: WALLET & VAULT CONTROLLER ==================== */
+    let lastWalletSummary = null;
+    let walletModalMode = 'leave';
+    let walletToastTimer = null;
+
+    const WALLET_FEE_SCHEDULE_FALLBACK = {
+      INTERNAL: { fixed_fee: 0.0, fx_spread_pct: 0.0, min_amount: 1.0 },
+      APTOS: { fixed_fee: 0.002, fx_spread_pct: 0.0, min_amount: 1.0 },
+      POLYGON: { fixed_fee: 0.07, fx_spread_pct: 0.0, min_amount: 1.0 },
+      BEP20: { fixed_fee: 0.15, fx_spread_pct: 0.0, min_amount: 5.0 },
+      ERC20: { fixed_fee: 0.80, fx_spread_pct: 0.0, min_amount: 6.0 },
+      TRC20: { fixed_fee: 1.30, fx_spread_pct: 0.0, min_amount: 10.0 },
+      LOCAL_BANK_NGN: { fixed_fee: 0.50, fx_spread_pct: 0.50, min_amount: 10.0 },
+      BANK_WIRE: { fixed_fee: 15.0, fx_spread_pct: 0.0, min_amount: 50.0 },
+    };
+
+    function safeNum(v, fallback = 0) {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : fallback;
+    }
+
+    function getFeeSpec(network) {
+      const key = String(network || 'INTERNAL').toUpperCase();
+      const live = lastWalletSummary && lastWalletSummary.fee_schedule && lastWalletSummary.fee_schedule[key];
+      return live || WALLET_FEE_SCHEDULE_FALLBACK[key] || WALLET_FEE_SCHEDULE_FALLBACK.INTERNAL;
+    }
+
+    function computeClientFee(network, grossAmount, isDeposit = false) {
+      const gross = Math.max(0, safeNum(grossAmount, 0));
+      const spec = getFeeSpec(network);
+      if (isDeposit) {
+        return { gross, fee: 0, net: gross, min: 0 };
+      }
+      const fixed = safeNum(spec.fixed_fee, 0);
+      const fx = gross * (safeNum(spec.fx_spread_pct, 0) / 100.0);
+      const fee = fixed + fx;
+      const net = Math.max(0, gross - fee);
+      return { gross, fee, net, min: safeNum(spec.min_amount, 1) };
+    }
+
+    function showWalletToast(message, tone = 'info') {
+      const el = document.getElementById('wallet-toast');
+      if (!el) return;
+      if (walletToastTimer) clearTimeout(walletToastTimer);
+      let cls = 'fixed bottom-5 right-5 z-50 max-w-sm px-4 py-3 rounded-2xl glass-card border text-xs font-medium shadow-2xl ';
+      if (tone === 'error') {
+        cls += 'border-rose-500/50 bg-rose-950/90 text-rose-200';
+      } else if (tone === 'warn') {
+        cls += 'border-amber-500/50 bg-amber-950/90 text-amber-200';
+      } else {
+        cls += 'border-emerald-500/45 bg-emerald-950/90 text-emerald-200';
+      }
+      el.className = cls;
+      el.textContent = message;
+      walletToastTimer = setTimeout(() => {
+        el.classList.add('hidden');
+      }, 4500);
+    }
+
+    function applyWalletHeaderPills(summary) {
+      if (!summary || !summary.markets || !summary.combined) return;
+      const mKey = currentMarket === 'BYBIT' ? 'bybit' : (currentMarket === 'FOREX' ? 'forex' : null);
+      const scope = mKey ? summary.markets[mKey] : summary.combined;
+      if (!scope) return;
+
+      const vaultText = document.getElementById('kpi-vault-text');
+      if (vaultText) {
+        vaultText.textContent = `Vault: ${fmtUsd(safeNum(scope.vault_balance))} (Protected)`;
+      }
+
+      const marginPill = document.getElementById('kpi-margin-pill');
+      if (marginPill) {
+        const freeM = safeNum(scope.free_margin);
+        const ml = scope.margin_level_pct;
+        const mlStr = ml === null || ml === undefined ? '∞' : `${safeNum(ml).toFixed(0)}%`;
+        marginPill.textContent = `Free ${fmtUsd(freeM)} · ML ${mlStr}`;
+
+        if (ml !== null && ml !== undefined && safeNum(ml) <= 100) {
+          marginPill.className = 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-mono font-bold bg-rose-500/25 text-rose-300 border border-rose-500/50 animate-pulse whitespace-nowrap tabular-nums';
+        } else if (ml !== null && ml !== undefined && safeNum(ml) <= 150) {
+          marginPill.className = 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-mono font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/40 whitespace-nowrap tabular-nums';
+        } else {
+          marginPill.className = 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-mono bg-white/[0.05] text-zinc-300 border border-white/[0.08] whitespace-nowrap tabular-nums';
+        }
+      }
+    }
+
+    function renderWalletSummary(summary) {
+      lastWalletSummary = summary;
+      applyWalletHeaderPills(summary);
+
+      const comb = summary.combined || {};
+      const byb = (summary.markets && summary.markets.bybit) || {};
+      const fx = (summary.markets && summary.markets.forex) || {};
+      const fric = comb.lifetime_friction_breakdown || {};
+      const recon = comb.reconciliation || { reconciled: true, drift: '0.000000' };
+
+      const setTxt = (id, text) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = text;
+      };
+
+      setTxt('w-active-total', fmtUsd(safeNum(comb.active_balance)));
+      setTxt('w-active-split', `Bybit ${fmtUsd(safeNum(byb.active_balance))} · Forex ${fmtUsd(safeNum(fx.active_balance))}`);
+      setTxt('w-free-margin', fmtUsd(safeNum(comb.free_margin)));
+      setTxt('w-used-margin', fmtUsd(safeNum(comb.used_margin)));
+
+      const mlBadge = document.getElementById('w-margin-badge');
+      if (mlBadge) {
+        const ml = comb.margin_level_pct;
+        mlBadge.textContent = ml === null || ml === undefined ? 'ML ∞' : `ML ${safeNum(ml).toFixed(1)}%`;
+        if (ml !== null && ml !== undefined && safeNum(ml) <= 100) {
+          mlBadge.className = 'px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-rose-500/25 text-rose-300 border border-rose-500/45 animate-pulse whitespace-nowrap tabular-nums';
+        } else if (ml !== null && ml !== undefined && safeNum(ml) <= 150) {
+          mlBadge.className = 'px-2 py-0.5 rounded-md text-[10px] font-mono font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/40 whitespace-nowrap tabular-nums';
+        } else {
+          mlBadge.className = 'px-2 py-0.5 rounded-md text-[10px] font-mono bg-white/[0.06] text-zinc-300 border border-white/[0.08] whitespace-nowrap tabular-nums';
+        }
+      }
+
+      setTxt('w-vault-total', fmtUsd(safeNum(comb.vault_balance)));
+      setTxt('w-vault-split', `Bybit ${fmtUsd(safeNum(byb.vault_balance))} · Forex ${fmtUsd(safeNum(fx.vault_balance))}`);
+      const driftVal = safeNum(recon.drift, 0);
+      setTxt('w-drift-label', `Drift ${fmtUsd(driftVal)}`);
+      const reconBadge = document.getElementById('w-reconcile-badge');
+      if (reconBadge) {
+        if (recon.reconciled) {
+          reconBadge.textContent = 'Ledger Reconciled ✓';
+          reconBadge.className = 'px-2 py-0.5 rounded-md text-[10px] font-mono font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 whitespace-nowrap';
+        } else {
+          reconBadge.textContent = `Drift Warning (${fmtUsd(driftVal)})`;
+          reconBadge.className = 'px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40 whitespace-nowrap';
+        }
+      }
+
+      const tradingFees = safeNum(fric.entry_fees) + safeNum(fric.exit_fees);
+      setTxt('w-friction-total', fmtUsd(safeNum(fric.total_friction)));
+      setTxt('w-gross-vs-net', `Gross ${fmtSignedUsd(safeNum(fric.gross_pnl_total))} · Net ${fmtSignedUsd(safeNum(fric.net_pnl_total))}`);
+      setTxt('w-fric-trading', fmtUsd(tradingFees));
+      setTxt('w-fric-spread', fmtUsd(safeNum(fric.spread_cost)));
+      setTxt('w-fric-slip', fmtUsd(safeNum(fric.slippage_cost)));
+      setTxt('w-fric-funding', fmtUsd(safeNum(fric.funding_swaps)));
+      setTxt('w-fric-withdraw', fmtUsd(safeNum(fric.withdrawal_fees)));
+
+      updateTransferPreview();
+      if (!document.activeElement || !['ws-sweep-base', 'ws-sweep-threshold', 'wr-bybit-lev'].includes(document.activeElement.id)) {
+        syncSettingsFormsFromSummary();
+        syncRealismFormFromSummary();
+      }
+    }
+
+    function syncSettingsFormsFromSummary() {
+      if (!lastWalletSummary || !lastWalletSummary.markets) return;
+      const m = document.getElementById('ws-market')?.value || 'bybit';
+      const w = lastWalletSummary.markets[m];
+      if (!w || !w.auto_sweep) return;
+      const en = document.getElementById('ws-sweep-enabled');
+      const base = document.getElementById('ws-sweep-base');
+      const thr = document.getElementById('ws-sweep-threshold');
+      const net = document.getElementById('ws-sweep-network');
+      if (en) en.checked = Boolean(w.auto_sweep.enabled);
+      if (base) base.value = safeNum(w.auto_sweep.base_capital, 20);
+      if (thr) thr.value = safeNum(w.auto_sweep.threshold, 50);
+      if (net) net.value = w.auto_sweep.network || 'INTERNAL';
+      updateAutoSweepPreview();
+    }
+
+    function syncRealismFormFromSummary() {
+      if (!lastWalletSummary || !lastWalletSummary.markets) return;
+      const m = document.getElementById('wr-market')?.value || 'bybit';
+      const w = lastWalletSummary.markets[m];
+      if (!w || !w.realism_settings) return;
+      const rs = w.realism_settings;
+      const re = document.getElementById('wr-realism-enabled');
+      const fp = document.getElementById('wr-forex-profile');
+      const fl = document.getElementById('wr-forex-lev');
+      const bl = document.getElementById('wr-bybit-lev');
+      const mo = document.getElementById('wr-min-lot-override');
+      if (re) re.checked = Boolean(rs.realism_enabled);
+      if (fp && (rs.account_profile === 'mt5_raw_ecn' || rs.account_profile === 'mt5_standard_stp')) {
+        fp.value = rs.account_profile;
+      }
+      if (fl) fl.value = String(rs.forex_leverage || 500);
+      if (bl) bl.value = String(rs.bybit_leverage || 5);
+      if (mo) mo.checked = Boolean(rs.allow_min_lot_override);
+    }
+
+    function updateAutoSweepPreview() {
+      const base = Math.max(0, safeNum(document.getElementById('ws-sweep-base')?.value, 20));
+      const thr = Math.max(0, safeNum(document.getElementById('ws-sweep-threshold')?.value, 50));
+      const net = document.getElementById('ws-sweep-network')?.value || 'INTERNAL';
+      const spec = getFeeSpec(net);
+      const triggerAt = base + thr;
+      const feeStr = safeNum(spec.fx_spread_pct) > 0
+        ? `$${safeNum(spec.fixed_fee).toFixed(2)} + ${safeNum(spec.fx_spread_pct).toFixed(2)}% ${net}`
+        : `$${safeNum(spec.fixed_fee).toFixed(safeNum(spec.fixed_fee) < 0.01 && safeNum(spec.fixed_fee) > 0 ? 3 : 2)} ${net}`;
+      const el = document.getElementById('ws-sweep-preview');
+      if (el) {
+        el.textContent = `When free active balance reaches $${triggerAt.toFixed(2)}+, automatically sweep excess to Vault (Fee: ${feeStr}).`;
+      }
+    }
+
+    function getMaxForTransfer() {
+      if (!lastWalletSummary || !lastWalletSummary.markets) return 0;
+      const m = document.getElementById('wt-market')?.value || 'bybit';
+      const dir = document.getElementById('wt-direction')?.value || 'TRADING_TO_VAULT';
+      const w = lastWalletSummary.markets[m];
+      if (!w) return 0;
+      if (dir === 'VAULT_TO_TRADING') return safeNum(w.vault_balance, 0);
+      if (dir === 'EXTERNAL_TO_TRADING') return 0;
+      return safeNum(w.withdrawable_active, 0);
+    }
+
+    function fillMaxTransferAmount() {
+      const maxAmt = getMaxForTransfer();
+      const input = document.getElementById('wt-amount');
+      if (input) {
+        input.value = maxAmt > 0 ? maxAmt.toFixed(2) : '';
+        updateTransferPreview();
+      }
+    }
+
+    function updateTransferPreview() {
+      const dir = document.getElementById('wt-direction')?.value || 'TRADING_TO_VAULT';
+      const net = document.getElementById('wt-network')?.value || 'INTERNAL';
+      const amt = safeNum(document.getElementById('wt-amount')?.value, 0);
+      const isDeposit = dir === 'EXTERNAL_TO_TRADING' || dir === 'VAULT_TO_TRADING';
+      const calc = computeClientFee(isDeposit ? 'INTERNAL' : net, amt, isDeposit);
+
+      const maxPill = document.getElementById('wt-withdrawable-pill');
+      if (maxPill) {
+        const maxAmt = getMaxForTransfer();
+        maxPill.textContent = dir === 'EXTERNAL_TO_TRADING' ? 'Deposit Fee: $0.00' : `Max: ${fmtUsd(maxAmt)}`;
+      }
+      const feeEl = document.getElementById('wt-prev-fee');
+      const netEl = document.getElementById('wt-prev-net');
+      const minEl = document.getElementById('wt-prev-min');
+      if (feeEl) feeEl.textContent = fmtUsd(calc.fee);
+      if (netEl) netEl.textContent = fmtUsd(calc.net);
+      if (minEl) minEl.textContent = isDeposit ? 'No minimum' : `Min ${fmtUsd(calc.min)}`;
+    }
+
+    async function fetchWalletSummary() {
+      try {
+        const res = await fetch('/api/wallet/summary');
+        if (res.status === 401) { handleAuthExpired(); return; }
+        if (!res.ok) return;
+        const data = await res.json();
+        renderWalletSummary(data);
+      } catch (err) {
+        console.error('Wallet summary fetch error:', err);
+      }
+    }
+
+    async function fetchWalletTransactions() {
+      try {
+        const res = await fetch('/api/wallet/transactions?limit=50');
+        if (res.status === 401) { handleAuthExpired(); return; }
+        if (!res.ok) return;
+        const data = await res.json();
+        const tbody = document.getElementById('wallet-tx-tbody');
+        if (!tbody) return;
+        const items = Array.isArray(data.items) ? data.items : [];
+        if (!items.length) {
+          tbody.innerHTML = '<tr><td colspan="8" class="py-6 text-center text-zinc-500">No wallet transactions yet.</td></tr>';
+          return;
+        }
+        tbody.innerHTML = items.map((tx) => {
+          const ts = tx.created_at ? new Date(tx.created_at).toLocaleString([], { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
+          const fee = safeNum(tx.network_fee) + safeNum(tx.fx_spread_fee);
+          let typeBadge = 'bg-white/[0.06] text-zinc-300 border-white/[0.10]';
+          let typeLabel = tx.tx_type || 'TX';
+          if (typeLabel === 'AUTO_SWEEP') {
+            typeBadge = 'bg-emerald-500/15 text-emerald-300 border-emerald-500/35';
+          } else if (typeLabel === 'LEAVE_BALANCE_CHALLENGE') {
+            typeBadge = 'bg-sky-500/15 text-sky-300 border-sky-500/35';
+            typeLabel = 'CHALLENGE';
+          } else if (typeLabel === 'EXTERNAL_TO_TRADING') {
+            typeBadge = 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30';
+            typeLabel = 'DEPOSIT';
+          } else if (typeLabel === 'TRADING_TO_EXTERNAL') {
+            typeBadge = 'bg-amber-500/15 text-amber-300 border-amber-500/30';
+            typeLabel = 'WITHDRAWAL';
+          }
+          return `
+            <tr class="hover:bg-white/[0.02]">
+              <td class="py-2 pr-3 text-zinc-400 whitespace-nowrap">${escapeHtml(ts)}</td>
+              <td class="py-2 pr-3 whitespace-nowrap"><span class="px-1.5 py-0.5 rounded text-[10px] border ${typeBadge}">${escapeHtml(typeLabel)}</span></td>
+              <td class="py-2 pr-3 uppercase text-zinc-300">${escapeHtml(tx.market)}</td>
+              <td class="py-2 pr-3 text-zinc-400">${escapeHtml(tx.network)}</td>
+              <td class="py-2 pr-3 text-right tabular-nums">${fmtUsd(safeNum(tx.gross_amount))}</td>
+              <td class="py-2 pr-3 text-right text-amber-300 tabular-nums">${fmtUsd(fee)}</td>
+              <td class="py-2 pr-3 text-right text-emerald-300 font-semibold tabular-nums">${fmtUsd(safeNum(tx.net_amount))}</td>
+              <td class="py-2 text-right text-zinc-400 whitespace-nowrap tabular-nums">${fmtUsd(safeNum(tx.active_balance_after))} / ${fmtUsd(safeNum(tx.vault_balance_after))}</td>
+            </tr>
+          `;
+        }).join('');
+      } catch (err) {
+        console.error('Wallet transactions fetch error:', err);
+      }
+    }
+
+    async function fetchWalletRejections() {
+      try {
+        const res = await fetch('/api/wallet/rejections?limit=50');
+        if (res.status === 401) { handleAuthExpired(); return; }
+        if (!res.ok) return;
+        const data = await res.json();
+        const items = Array.isArray(data.items) ? data.items : [];
+        const pill = document.getElementById('w-rej-count-pill');
+        if (pill) pill.textContent = String(items.length);
+        const tbody = document.getElementById('wallet-rej-tbody');
+        if (!tbody) return;
+        if (!items.length) {
+          tbody.innerHTML = '<tr><td colspan="6" class="py-6 text-center text-zinc-500">No skipped signals recorded yet.</td></tr>';
+          return;
+        }
+        tbody.innerHTML = items.map((r) => {
+          const ts = r.created_at ? new Date(r.created_at).toLocaleString([], { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
+          const reasonCls = r.reason_code === 'INSUFFICIENT_MARGIN' || r.reason_code === 'DAILY_LOSS_LOCKED'
+            ? 'bg-rose-500/15 text-rose-300 border-rose-500/35'
+            : 'bg-amber-500/15 text-amber-300 border-amber-500/35';
+          return `
+            <tr class="hover:bg-white/[0.02]">
+              <td class="py-2 pr-3 text-zinc-400 whitespace-nowrap">${escapeHtml(ts)}</td>
+              <td class="py-2 pr-3 font-bold text-white whitespace-nowrap">${escapeHtml(r.symbol)}</td>
+              <td class="py-2 pr-3 text-zinc-300">${escapeHtml(r.side)}</td>
+              <td class="py-2 pr-3 whitespace-nowrap"><span class="px-1.5 py-0.5 rounded text-[10px] border ${reasonCls}">${escapeHtml(r.reason_code)}</span></td>
+              <td class="py-2 pr-3 text-right whitespace-nowrap tabular-nums">${fmtUsd(safeNum(r.required_margin))} / ${fmtUsd(safeNum(r.available_free_margin))}</td>
+              <td class="py-2 text-zinc-400 min-w-[220px]">${escapeHtml(r.details || '')}</td>
+            </tr>
+          `;
+        }).join('');
+      } catch (err) {
+        console.error('Wallet rejections fetch error:', err);
+      }
+    }
+
+    function fetchWalletAll() {
+      fetchWalletSummary();
+      fetchWalletTransactions();
+      fetchWalletRejections();
+    }
+
+    function setWalletTableTab(tab) {
+      const isLedger = tab !== 'rejections';
+      document.getElementById('wtab-ledger-panel')?.classList.toggle('hidden', !isLedger);
+      document.getElementById('wtab-rejections-panel')?.classList.toggle('hidden', isLedger);
+      const lBtn = document.getElementById('wtab-ledger-btn');
+      const rBtn = document.getElementById('wtab-rejections-btn');
+      if (lBtn) {
+        lBtn.className = isLedger
+          ? 'px-3 py-1 rounded-lg text-xs font-semibold transition bg-emerald-500/20 text-emerald-300 border border-emerald-500/35'
+          : 'px-3 py-1 rounded-lg text-xs font-medium transition text-zinc-400 border border-transparent hover:text-zinc-200';
+      }
+      if (rBtn) {
+        rBtn.className = !isLedger
+          ? 'px-3 py-1 rounded-lg text-xs font-semibold transition bg-emerald-500/20 text-emerald-300 border border-emerald-500/35'
+          : 'px-3 py-1 rounded-lg text-xs font-medium transition text-zinc-400 border border-transparent hover:text-zinc-200';
+      }
+    }
+
+    function openChallengeModal(mode, amount) {
+      walletModalMode = mode === 'topup' ? 'topup' : 'leave';
+      const modal = document.getElementById('wallet-challenge-modal');
+      const title = document.getElementById('wcm-title');
+      const amtInput = document.getElementById('wcm-amount');
+      const amtLabel = document.getElementById('wcm-amount-label');
+      const netWrap = document.getElementById('wcm-network-wrap');
+      const mSel = document.getElementById('wcm-market');
+
+      if (walletModalMode === 'topup') {
+        if (title) title.textContent = 'Top Up Active Capital from Vault';
+        if (amtLabel) amtLabel.textContent = 'Top-Up Amount from Vault ($)';
+        if (netWrap) netWrap.classList.add('hidden');
+        if (mSel && mSel.value === 'all') mSel.value = 'bybit';
+      } else {
+        if (title) title.textContent = `Leave $${amount} Micro-Account Challenge`;
+        if (amtLabel) amtLabel.textContent = 'Target Active Balance ($)';
+        if (netWrap) netWrap.classList.remove('hidden');
+      }
+      if (amtInput) amtInput.value = String(amount || 20);
+      updateChallengeModalPreview();
+      if (modal) modal.classList.remove('hidden');
+    }
+
+    function closeChallengeModal() {
+      document.getElementById('wallet-challenge-modal')?.classList.add('hidden');
+    }
+
+    function updateChallengeModalPreview() {
+      const m = document.getElementById('wcm-market')?.value || 'bybit';
+      const net = document.getElementById('wcm-network')?.value || 'INTERNAL';
+      const val = Math.max(0, safeNum(document.getElementById('wcm-amount')?.value, 20));
+      const scope = lastWalletSummary && lastWalletSummary.markets
+        ? (m === 'all' ? lastWalletSummary.combined : lastWalletSummary.markets[m])
+        : { active_balance: 0, vault_balance: 0 };
+      const currActive = safeNum(scope && scope.active_balance, 0);
+
+      if (walletModalMode === 'topup') {
+        document.getElementById('wcm-prev-gross').textContent = fmtUsd(val);
+        document.getElementById('wcm-prev-fee').textContent = '$0.00';
+        document.getElementById('wcm-prev-net').textContent = `+${fmtUsd(val)} to Active`;
+        document.getElementById('wcm-prev-active').textContent = fmtUsd(currActive + val);
+      } else {
+        const excess = Math.max(0, currActive - val);
+        const calc = computeClientFee(net, excess, false);
+        document.getElementById('wcm-prev-gross').textContent = fmtUsd(excess);
+        document.getElementById('wcm-prev-fee').textContent = fmtUsd(calc.fee);
+        document.getElementById('wcm-prev-net').textContent = fmtUsd(calc.net);
+        document.getElementById('wcm-prev-active').textContent = fmtUsd(val);
+      }
+    }
+
+    async function confirmChallengeModal() {
+      const btn = document.getElementById('wcm-confirm-btn');
+      if (btn) btn.disabled = true;
+      try {
+        const market = document.getElementById('wcm-market')?.value || 'bybit';
+        const network = document.getElementById('wcm-network')?.value || 'INTERNAL';
+        const amount = safeNum(document.getElementById('wcm-amount')?.value, 0);
+
+        let res;
+        if (walletModalMode === 'topup') {
+          const targetMarket = market === 'all' ? 'bybit' : market;
+          res = await fetch('/api/wallet/transfer', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              market: targetMarket,
+              tx_type: 'VAULT_TO_TRADING',
+              amount: amount.toFixed(2),
+              network: 'INTERNAL',
+              note: 'Top up from Vault',
+            }),
+          });
+        } else {
+          res = await fetch('/api/wallet/leave-balance', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              market,
+              target_active_balance: amount.toFixed(2),
+              network,
+              split_mode: 'equal',
+            }),
+          });
+        }
+
+        if (res.status === 401) { handleAuthExpired(); return; }
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          const tone = res.status === 409 ? 'warn' : 'error';
+          showWalletToast(body.detail || `Action failed (HTTP ${res.status})`, tone);
+          return;
+        }
+        closeChallengeModal();
+        showWalletToast(
+          walletModalMode === 'topup'
+            ? `Topped up $${amount.toFixed(2)} from Vault.`
+            : `Challenge active: left $${amount.toFixed(2)} in Active Trading & protected excess in Vault.`,
+          'info'
+        );
+        fetchWalletAll();
+        fetchDashboard();
+      } catch (err) {
+        showWalletToast('Network error executing wallet action.', 'error');
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    async function submitManualTransfer() {
+      const btn = document.getElementById('btn-wt-submit');
+      if (btn) btn.disabled = true;
+      try {
+        const market = document.getElementById('wt-market')?.value || 'bybit';
+        const tx_type = document.getElementById('wt-direction')?.value || 'TRADING_TO_VAULT';
+        const amount = safeNum(document.getElementById('wt-amount')?.value, 0);
+        const network = document.getElementById('wt-network')?.value || 'INTERNAL';
+        if (amount <= 0) {
+          showWalletToast('Enter an amount greater than $0.00.', 'warn');
+          return;
+        }
+        const res = await fetch('/api/wallet/transfer', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ market, tx_type, amount: amount.toFixed(2), network }),
+        });
+        if (res.status === 401) { handleAuthExpired(); return; }
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          showWalletToast(body.detail || `Transfer rejected (HTTP ${res.status})`, 'error');
+          return;
+        }
+        showWalletToast(`Transfer complete (${tx_type} · ${fmtUsd(amount)}).`, 'info');
+        fetchWalletAll();
+        fetchDashboard();
+      } catch (err) {
+        showWalletToast('Network error submitting transfer.', 'error');
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    async function saveAutoSweepSettings() {
+      try {
+        const market = document.getElementById('ws-market')?.value || 'bybit';
+        const auto_sweep_enabled = Boolean(document.getElementById('ws-sweep-enabled')?.checked);
+        const auto_sweep_base_capital = safeNum(document.getElementById('ws-sweep-base')?.value, 20).toFixed(2);
+        const auto_sweep_threshold = safeNum(document.getElementById('ws-sweep-threshold')?.value, 50).toFixed(2);
+        const auto_sweep_network = document.getElementById('ws-sweep-network')?.value || 'INTERNAL';
+
+        const res = await fetch('/api/wallet/settings', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            market,
+            auto_sweep_enabled,
+            auto_sweep_base_capital,
+            auto_sweep_threshold,
+            auto_sweep_network,
+          }),
+        });
+        if (res.status === 401) { handleAuthExpired(); return; }
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          showWalletToast(body.detail || 'Failed to save Auto-Sweep settings.', 'error');
+          return;
+        }
+        showWalletToast(`Auto-Sweep settings saved for ${market.toUpperCase()}.`, 'info');
+        fetchWalletSummary();
+      } catch (err) {
+        showWalletToast('Network error saving Auto-Sweep settings.', 'error');
+      }
+    }
+
+    async function saveRealismSettings() {
+      try {
+        const market = document.getElementById('wr-market')?.value || 'bybit';
+        const realism_enabled = Boolean(document.getElementById('wr-realism-enabled')?.checked);
+        const forex_leverage = Math.max(1, parseInt(document.getElementById('wr-forex-lev')?.value || '500', 10));
+        const bybit_leverage = Math.min(20, Math.max(1, parseInt(document.getElementById('wr-bybit-lev')?.value || '5', 10)));
+        const allow_min_lot_override = Boolean(document.getElementById('wr-min-lot-override')?.checked);
+        const payload = {
+          market,
+          realism_enabled,
+          forex_leverage,
+          bybit_leverage,
+          allow_min_lot_override,
+        };
+        if (market === 'forex') {
+          payload.account_profile = document.getElementById('wr-forex-profile')?.value || 'mt5_raw_ecn';
+        }
+        const res = await fetch('/api/wallet/settings', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (res.status === 401) { handleAuthExpired(); return; }
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          showWalletToast(body.detail || 'Failed to save realism settings.', 'error');
+          return;
+        }
+        showWalletToast(`Realism & leverage settings saved for ${market.toUpperCase()}.`, 'info');
+        fetchWalletSummary();
+      } catch (err) {
+        showWalletToast('Network error saving realism settings.', 'error');
+      }
+    }
+
     function startPolling() {
       stopPolling();
       fetchDashboard();
+      fetchWalletSummary();
       fetchLiveChart();
       if (currentView === 'summarizer') fetchSummary();
+      if (currentView === 'wallet') fetchWalletAll();
       pollTimerId = setInterval(() => {
         if (authEnabled && !isAuthenticated) return;
         if (currentView === 'terminal') {
           fetchDashboard();
+          fetchWalletSummary();
           fetchLiveChart();
         } else if (currentView === 'summarizer') {
           fetchDashboard();
           fetchSummary();
+        } else if (currentView === 'wallet') {
+          fetchWalletAll();
         }
       }, 3000);
     }
