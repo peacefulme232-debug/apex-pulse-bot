@@ -59,7 +59,7 @@ _TRADES_MIGRATION_COLUMNS: list[tuple[str, str, str]] = [
     ("partial_tp_taken", "BOOLEAN DEFAULT 0", "BOOLEAN DEFAULT FALSE"),
     ("realized_partial_pnl_usd", "FLOAT DEFAULT 0.0", "DOUBLE PRECISION DEFAULT 0.0"),
     ("order_entry_type", "VARCHAR(16) DEFAULT 'MARKET'", "VARCHAR(16) DEFAULT 'MARKET'"),
-    ("order_exit_type", "VARCHAR(16)", "VARCHAR(16)"),
+    ("order_exit_type", "VARCHAR(16) DEFAULT 'MARKET'", "VARCHAR(16) DEFAULT 'MARKET'"),
     ("requested_entry_price", "NUMERIC(18, 8)", "NUMERIC(18, 8)"),
     ("filled_entry_price", "NUMERIC(18, 8)", "NUMERIC(18, 8)"),
     ("requested_exit_price", "NUMERIC(18, 8)", "NUMERIC(18, 8)"),
@@ -74,9 +74,26 @@ _TRADES_MIGRATION_COLUMNS: list[tuple[str, str, str]] = [
     ("slippage_cost", "NUMERIC(18, 6) DEFAULT 0.000000", "NUMERIC(18, 6) DEFAULT 0.000000"),
     ("funding_or_swap_fee", "NUMERIC(18, 6) DEFAULT 0.000000", "NUMERIC(18, 6) DEFAULT 0.000000"),
     ("net_pnl", "NUMERIC(18, 6) DEFAULT 0.000000", "NUMERIC(18, 6) DEFAULT 0.000000"),
+    ("breakeven_applied", "BOOLEAN DEFAULT 0", "BOOLEAN DEFAULT FALSE"),
     ("last_funding_applied_at", "DATETIME", "TIMESTAMP WITH TIME ZONE"),
     ("last_swap_applied_date", "DATE", "DATE"),
 ]
+
+_WALLET_ACCOUNTS_MIGRATION_COLUMNS: list[tuple[str, str, str]] = [
+    ("consecutive_losses", "INTEGER NOT NULL DEFAULT 0", "INTEGER NOT NULL DEFAULT 0"),
+    ("circuit_breaker_until", "DATETIME", "TIMESTAMP WITH TIME ZONE"),
+]
+
+_EXECUTION_REJECTIONS_MIGRATION_COLUMNS: list[tuple[str, str, str]] = [
+    ("strategy", "VARCHAR(48)", "VARCHAR(48)"),
+    ("confluence_score", "NUMERIC(6, 2)", "NUMERIC(6, 2)"),
+]
+
+_TABLE_MIGRATION_COLUMNS: dict[str, list[tuple[str, str, str]]] = {
+    "trades": _TRADES_MIGRATION_COLUMNS,
+    "wallet_accounts": _WALLET_ACCOUNTS_MIGRATION_COLUMNS,
+    "execution_rejections": _EXECUTION_REJECTIONS_MIGRATION_COLUMNS,
+}
 
 
 def _q6(value: Decimal) -> Decimal:
@@ -84,40 +101,47 @@ def _q6(value: Decimal) -> Decimal:
 
 
 def migrate_sqlite_schema(target_engine: Engine) -> None:
-    """Idempotently add missing columns to existing SQLite trades tables."""
+    """Idempotently add missing columns to existing SQLite tables."""
     if target_engine.dialect.name != "sqlite":
         return
 
     with target_engine.begin() as conn:
-        rows = conn.execute(text("PRAGMA table_info(trades)")).fetchall()
-        if not rows:
-            return
-        existing_cols = {str(row[1]) for row in rows}
-        for col_name, sqlite_def, _pg_def in _TRADES_MIGRATION_COLUMNS:
-            if col_name not in existing_cols:
-                conn.execute(text(f"ALTER TABLE trades ADD COLUMN {col_name} {sqlite_def}"))
+        for table_name, columns in _TABLE_MIGRATION_COLUMNS.items():
+            rows = conn.execute(text(f"PRAGMA table_info({table_name})")).fetchall()
+            if not rows:
+                continue
+            existing_cols = {str(row[1]) for row in rows}
+            for col_name, sqlite_def, _pg_def in columns:
+                if col_name not in existing_cols:
+                    conn.execute(
+                        text(f"ALTER TABLE {table_name} ADD COLUMN {col_name} {sqlite_def}")
+                    )
 
 
 def migrate_schema(target_engine: Engine) -> None:
-    """Idempotently add missing columns to existing trades tables on both PostgreSQL and SQLite."""
+    """Idempotently add missing columns to existing tables on both PostgreSQL and SQLite."""
     if target_engine.dialect.name == "sqlite":
         migrate_sqlite_schema(target_engine)
         return
 
     if target_engine.dialect.name == "postgresql":
         with target_engine.begin() as conn:
-            exists = conn.execute(
-                text(
-                    "SELECT 1 FROM information_schema.tables "
-                    "WHERE table_schema = 'public' AND table_name = 'trades'"
-                )
-            ).fetchone()
-            if not exists:
-                return
-            for col_name, _sqlite_def, pg_def in _TRADES_MIGRATION_COLUMNS:
-                conn.execute(
-                    text(f"ALTER TABLE trades ADD COLUMN IF NOT EXISTS {col_name} {pg_def}")
-                )
+            for table_name, columns in _TABLE_MIGRATION_COLUMNS.items():
+                exists = conn.execute(
+                    text(
+                        "SELECT 1 FROM information_schema.tables "
+                        "WHERE table_schema = 'public' AND table_name = :table_name"
+                    ),
+                    {"table_name": table_name},
+                ).fetchone()
+                if not exists:
+                    continue
+                for col_name, _sqlite_def, pg_def in columns:
+                    conn.execute(
+                        text(
+                            f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS {col_name} {pg_def}"
+                        )
+                    )
 
 
 def seed_wallet_accounts(target_engine: Engine) -> None:
@@ -188,6 +212,8 @@ def seed_wallet_accounts(target_engine: Engine) -> None:
                     auto_sweep_base_capital=Decimal("20.000000"),
                     auto_sweep_threshold=Decimal("50.000000"),
                     auto_sweep_network="INTERNAL",
+                    consecutive_losses=0,
+                    circuit_breaker_until=None,
                 )
             )
         db.commit()

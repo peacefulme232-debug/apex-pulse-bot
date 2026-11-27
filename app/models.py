@@ -43,7 +43,7 @@ class Trade(Base):
 
     # Phase 1 Realism Engine columns (exact Decimal precision)
     order_entry_type: Mapped[str] = mapped_column(String(16), default="MARKET")
-    order_exit_type: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    order_exit_type: Mapped[Optional[str]] = mapped_column(String(16), nullable=True, default="MARKET")
     requested_entry_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(18, 8, asdecimal=True), nullable=True)
     filled_entry_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(18, 8, asdecimal=True), nullable=True)
     requested_exit_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(18, 8, asdecimal=True), nullable=True)
@@ -76,6 +76,7 @@ class Trade(Base):
     net_pnl: Mapped[Decimal] = mapped_column(
         Numeric(18, 6, asdecimal=True), default=Decimal("0.000000")
     )
+    breakeven_applied: Mapped[bool] = mapped_column(Boolean, default=False)
     last_funding_applied_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     last_swap_applied_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
 
@@ -115,6 +116,10 @@ class WalletAccount(Base):
         Numeric(18, 6, asdecimal=True), default=Decimal("50.000000")
     )
     auto_sweep_network: Mapped[str] = mapped_column(String(32), default="INTERNAL")
+    consecutive_losses: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    circuit_breaker_until: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
@@ -160,30 +165,55 @@ class WalletTransaction(Base):
 
 
 class ExecutionRejection(Base):
-    """Audit log of orders rejected due to realism constraints (min notional, margin, risk cap, daily loss)."""
+    """Audit log of orders rejected due to realism constraints or strategy vetoes."""
 
     __tablename__ = "execution_rejections"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     market: Mapped[str] = mapped_column(String(16), index=True)  # bybit | forex
     symbol: Mapped[str] = mapped_column(String(32), index=True)
-    side: Mapped[str] = mapped_column(String(8))
-    reason_code: Mapped[str] = mapped_column(String(32), index=True)
-    requested_qty: Mapped[Decimal] = mapped_column(
-        Numeric(18, 6, asdecimal=True), default=Decimal("0.000000")
+    side: Mapped[str] = mapped_column(String(16))
+    strategy: Mapped[Optional[str]] = mapped_column(String(48), nullable=True)
+    confluence_score: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(6, 2, asdecimal=True), nullable=True
     )
-    required_min_qty: Mapped[Decimal] = mapped_column(
-        Numeric(18, 6, asdecimal=True), default=Decimal("0.000000")
+    reason_code: Mapped[str] = mapped_column(String(48), index=True)
+    requested_qty: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(18, 8, asdecimal=True), nullable=True
     )
-    required_margin: Mapped[Decimal] = mapped_column(
-        Numeric(18, 6, asdecimal=True), default=Decimal("0.000000")
+    required_min_qty: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(18, 8, asdecimal=True), nullable=True
     )
-    available_free_margin: Mapped[Decimal] = mapped_column(
-        Numeric(18, 6, asdecimal=True), default=Decimal("0.000000")
+    required_margin: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(18, 6, asdecimal=True), nullable=True
+    )
+    available_free_margin: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(18, 6, asdecimal=True), nullable=True
     )
     details: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), index=True, default=utcnow
+    )
+
+
+class ArmedRetestSetup(Base):
+    """Persisted state for Breakout + Retest setups across container restarts."""
+
+    __tablename__ = "armed_retest_setups"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    market: Mapped[str] = mapped_column(String(16), index=True)  # bybit | forex
+    symbol: Mapped[str] = mapped_column(String(32), index=True)
+    side: Mapped[str] = mapped_column(String(16))  # LONG | SHORT
+    zone_low: Mapped[Decimal] = mapped_column(Numeric(18, 8, asdecimal=True))
+    zone_high: Mapped[Decimal] = mapped_column(Numeric(18, 8, asdecimal=True))
+    breakout_candle_range: Mapped[Decimal] = mapped_column(Numeric(18, 8, asdecimal=True))
+    breakout_atr: Mapped[Decimal] = mapped_column(Numeric(18, 8, asdecimal=True))
+    bars_remaining: Mapped[int] = mapped_column(Integer, default=10)
+    status: Mapped[str] = mapped_column(String(24), default="ARMED")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
 
 
