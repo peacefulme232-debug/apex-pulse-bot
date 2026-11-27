@@ -872,7 +872,7 @@ def bybit_size_and_validate_order(
                 ),
             )
         override_risk = q6(eff_min_qty * risk_per_unit)
-        max_override_risk = q6(risk_budget * TWO)
+        max_override_risk = q6(balance * Decimal("0.15"))
         if override_risk > max_override_risk:
             return OrderSizingResult(
                 approved=False,
@@ -885,7 +885,7 @@ def bybit_size_and_validate_order(
                 reason_code="RISK_CAP_EXCEEDED",
                 details=(
                     f"Min-lot override blocked: {symbol} risk ${override_risk:.2f} exceeds "
-                    f"max cap ${max_override_risk:.2f}."
+                    f"15% active_balance cap ${max_override_risk:.2f}."
                 ),
             )
         sized_qty = eff_min_qty
@@ -1406,7 +1406,7 @@ def forex_size_and_validate_order(
                 ),
             )
         override_risk = q6(spec.min_lot * risk_per_lot)
-        max_override_risk = q6(risk_budget * TWO)
+        max_override_risk = q6(balance * Decimal("0.15"))
         if override_risk > max_override_risk:
             return OrderSizingResult(
                 approved=False,
@@ -1419,7 +1419,7 @@ def forex_size_and_validate_order(
                 reason_code="RISK_CAP_EXCEEDED",
                 details=(
                     f"Min-lot override blocked: {symbol} risk ${override_risk:.2f} exceeds "
-                    f"max cap ${max_override_risk:.2f}."
+                    f"15% active_balance cap ${max_override_risk:.2f}."
                 ),
             )
         sized_lots = spec.min_lot

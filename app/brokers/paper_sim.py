@@ -101,7 +101,25 @@ DEFAULT_STRATEGIES: list[dict[str, Any]] = [
 
 
 class PaperSimBroker(BaseBroker):
-    """Simulated multi-market broker backed by SQLAlchemy persistence."""
+    """Simulated multi-market broker backed by SQLAlchemy persistence.
+
+    Ledger Convention (enforced consistently to guarantee zero double-counting):
+    1. Entry (`place_order`): Persists `entry_fee`, `spread_cost`, `slippage_cost`,
+       `initial_margin`, `maintenance_margin`, and `liquidation_price` on the Trade row.
+       Does NOT debit `entry_fee` from `wallet.active_balance` at open; `entry_fee` is
+       settled once at close inside `net_pnl`.
+    2. Periodic Funding / Swap (`apply_periodic_fees_and_risk_checks`): Immediately debits
+       or credits `wallet.active_balance` (with negative-balance protection) whenever an
+       8h Bybit funding boundary or 17:00 America/New_York Forex rollover is crossed, and
+       accumulates the amount into `trade.funding_or_swap_fee`.
+    3. Partial Scale-Out: Credits `partial_pnl` to `wallet.active_balance` and accumulates
+       it into `trade.realized_partial_pnl_usd`.
+    4. Exit (`close_position`): Computes `net_pnl = gross_pnl - entry_fee - exit_fee - funding_or_swap_fee`
+       and settles only the remaining unsettled cash delta
+       `realized_delta = net_pnl - realized_partial_pnl_usd + funding_or_swap_fee` onto
+       `wallet.active_balance`. Across any complete open -> funding/swap -> close cycle,
+       `active_balance_after - active_balance_before == net_pnl` to 6 decimal places.
+    """
 
     def __init__(self, session_factory: Callable[[], Session] = SessionLocal) -> None:
         self._session_factory = session_factory
@@ -180,15 +198,24 @@ class PaperSimBroker(BaseBroker):
         required_margin: Decimal | int | float | str,
         available_free_margin: Decimal | int | float | str,
         details: str = "",
+        strategy: Optional[str] = None,
+        confluence_score: Optional[Decimal | int | float | str] = None,
     ) -> ExecutionRejection:
         """Persist an ExecutionRejection audit record using exact Decimal columns."""
+        score_dec = (
+            to_decimal(confluence_score).quantize(Decimal("0.01"))
+            if confluence_score is not None
+            else None
+        )
         row = ExecutionRejection(
             market=self._wallet_market_key(market),
             symbol=symbol,
             side=(side or "").strip().upper(),
+            strategy=strategy,
+            confluence_score=score_dec,
             reason_code=reason_code,
-            requested_qty=q6(to_decimal(requested_qty)),
-            required_min_qty=q6(to_decimal(required_min_qty)),
+            requested_qty=q8(to_decimal(requested_qty)),
+            required_min_qty=q8(to_decimal(required_min_qty)),
             required_margin=q6(to_decimal(required_margin)),
             available_free_margin=q6(to_decimal(available_free_margin)),
             details=details,
@@ -208,6 +235,8 @@ class PaperSimBroker(BaseBroker):
         max_risk_per_trade_pct: Decimal | int | float | str,
         order_entry_type: str = "MARKET",
         volatility_pct: Optional[Decimal | int | float | str] = None,
+        strategy: Optional[str] = None,
+        confluence_score: Optional[Decimal | int | float | str] = None,
     ) -> OrderSizingResult:
         """Size and validate a proposed trade using ONLY wallet_accounts.active_balance (never vault_balance)."""
         market = self._infer_market(symbol)
@@ -258,6 +287,8 @@ class PaperSimBroker(BaseBroker):
                 required_margin=result.required_margin,
                 available_free_margin=result.available_free_margin,
                 details=result.details,
+                strategy=strategy,
+                confluence_score=confluence_score,
             )
         return result
 
@@ -481,7 +512,8 @@ class PaperSimBroker(BaseBroker):
                     else to_decimal(t.pnl_usd)
                 )
                 t_partial = to_decimal(t.realized_partial_pnl_usd)
-                unrealized = t_net - t_partial
+                t_funding = to_decimal(t.funding_or_swap_fee)
+                unrealized = t_net - t_partial + t_funding
                 if (t.market or "").upper() == "BYBIT":
                     bybit_open_pnl += unrealized
                 else:
@@ -641,6 +673,7 @@ class PaperSimBroker(BaseBroker):
                     initial_margin = metrics.initial_margin
                     maintenance_margin = metrics.maintenance_margin
                     liquidation_price: Optional[Decimal] = metrics.liquidation_price
+                    required_cash = metrics.required_cash
                 else:
                     lots = forex_units_to_lots(symbol, qty_dec)
                     fill = forex_simulate_fill(
@@ -661,6 +694,30 @@ class PaperSimBroker(BaseBroker):
                     )
                     maintenance_margin = q6(initial_margin * Decimal("0.5"))
                     liquidation_price = None
+                    required_cash = initial_margin
+
+                used_margin = self.get_used_margin(session, market)
+                free_margin = q6(max(ZERO, to_decimal(wallet.active_balance) - used_margin))
+                if free_margin < required_cash:
+                    details = (
+                        f"{symbol} requires ${required_cash:.2f} margin/cash "
+                        f"> available free margin ${free_margin:.2f}."
+                    )
+                    self.log_execution_rejection(
+                        db=session,
+                        market=market,
+                        symbol=symbol,
+                        side=side,
+                        reason_code="INSUFFICIENT_MARGIN",
+                        requested_qty=qty_dec,
+                        required_min_qty=qty_dec,
+                        required_margin=required_cash,
+                        available_free_margin=free_margin,
+                        details=details,
+                        strategy=strategy_name,
+                    )
+                    session.commit()
+                    raise ValueError(f"INSUFFICIENT_MARGIN: {details}")
 
                 req_entry_px = fill.requested_price
                 filled_entry_px = fill.filled_price
@@ -845,8 +902,8 @@ class PaperSimBroker(BaseBroker):
             trade.pnl_pct = round(pnl_pct, 2)
             trade.closed_at = self._utcnow()
 
-            # Credit realized net PnL (excluding partial PnL already credited) with negative balance protection
-            realized_delta = net_pnl - partial_realized
+            # Credit remaining unsettled net PnL (excluding partial PnL & funding/swap already applied to active_balance)
+            realized_delta = net_pnl - partial_realized + funding_or_swap
             wallet.active_balance = apply_negative_balance_protection(wallet.active_balance, realized_delta)
 
             strat = session.query(StrategyConfig).filter(StrategyConfig.name == trade.strategy_name).first()
@@ -936,6 +993,9 @@ class PaperSimBroker(BaseBroker):
                             to_decimal(trade.funding_or_swap_fee) + funding_res.fee_amount
                         )
                         trade.last_funding_applied_at = funding_res.new_last_funding_applied_at
+                        wallet.active_balance = apply_negative_balance_protection(
+                            wallet.active_balance, -funding_res.fee_amount
+                        )
 
                     # Recompute maintenance margin at current mark price
                     if qty_dec > ZERO and entry_px > ZERO:
@@ -966,6 +1026,9 @@ class PaperSimBroker(BaseBroker):
                             to_decimal(trade.funding_or_swap_fee) + swap_res.fee_amount
                         )
                         trade.last_swap_applied_date = swap_res.new_last_swap_applied_date
+                        wallet.active_balance = apply_negative_balance_protection(
+                            wallet.active_balance, -swap_res.fee_amount
+                        )
 
             remaining_gross = q6((live_px - entry_px) * qty_dec * direction)
             partial_realized = to_decimal(trade.realized_partial_pnl_usd)
@@ -1050,7 +1113,11 @@ class PaperSimBroker(BaseBroker):
                         if to_decimal(t.initial_margin) > ZERO
                         else forex_required_margin(t.symbol, lots, t_entry, int(forex_wallet.forex_leverage or 500))
                     )
-                    t_unreal = to_decimal(t.net_pnl) - to_decimal(t.realized_partial_pnl_usd)
+                    t_unreal = (
+                        to_decimal(t.net_pnl)
+                        - to_decimal(t.realized_partial_pnl_usd)
+                        + to_decimal(t.funding_or_swap_fee)
+                    )
                     total_fx_unrealized += t_unreal
                     snapshots.append(
                         ForexPositionSnapshot(

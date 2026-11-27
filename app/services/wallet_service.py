@@ -287,7 +287,8 @@ def compute_market_margin_metrics(db: Session, wallet: WalletAccount) -> dict[st
             else to_decimal(t.pnl_usd)
         )
         t_partial = to_decimal(t.realized_partial_pnl_usd)
-        total_unrealized_pnl += (t_net - t_partial)
+        t_funding = to_decimal(t.funding_or_swap_fee)
+        total_unrealized_pnl += (t_net - t_partial + t_funding)
 
     active_bal = q6(to_decimal(wallet.active_balance))
     used_margin = q6(used_margin)
@@ -369,8 +370,8 @@ def compute_market_friction_and_reconciliation(
             if t.filled_exit_price is not None:
                 realized_net_pnl += t_net
         else:
-            # Partial TP scale-out profits already credited to active_balance
-            realized_net_pnl += to_decimal(t.realized_partial_pnl_usd)
+            # Partial TP scale-out profits and periodic funding/swap already settled on active_balance
+            realized_net_pnl += to_decimal(t.realized_partial_pnl_usd) - to_decimal(t.funding_or_swap_fee)
 
     withdrawal_fees = ZERO
     external_inflows = ZERO

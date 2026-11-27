@@ -565,6 +565,8 @@ class BotRunner:
                             stop_loss=signal.stop_loss,
                             max_risk_per_trade_pct=self.risk_manager.max_risk_per_trade_pct,
                             order_entry_type="MARKET",
+                            strategy=signal.strategy_name,
+                            confluence_score=conf_result.score,
                         )
                         if not sizing.approved:
                             db.add(
