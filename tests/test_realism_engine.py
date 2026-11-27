@@ -26,6 +26,7 @@ from app.services.realism_engine import (
     bybit_simulate_fill,
     bybit_size_and_validate_order,
     calculate_net_pnl,
+    estimate_round_turn_friction,
     forex_calculate_rollover_swap,
     forex_commission_per_side,
     forex_evaluate_margin_status,
@@ -34,6 +35,7 @@ from app.services.realism_engine import (
     forex_required_margin,
     forex_round_turn_commission,
     get_bybit_contract_spec,
+    select_stop_out_targets,
 )
 
 
@@ -692,3 +694,183 @@ def test_startup_migration_empty_db_and_existing_legacy_db(tmp_path: Path) -> No
         )
         db.commit()
         assert db.query(WalletTransaction).count() == 1
+
+
+# ---------------------------------------------------------------------------
+# Gate 6: Prompt 2 Pure Math — Min Qty Closing Bypass, Clamped Slippage, Stop-Out Helper & Friction Estimator
+# ---------------------------------------------------------------------------
+
+
+def test_bybit_min_qty_sol_and_closing_bypass_and_clamped_slippage() -> None:
+    """Verify BTCUSDT@77k=0.002, SOLUSDT@150=0.1, closing bypass=min_qty, and slippage clamping."""
+    assert bybit_effective_min_qty("BTCUSDT", Decimal("77000")) == Decimal("0.002")
+    assert bybit_effective_min_qty("BTCUSDT", Decimal("77000"), is_closing=True) == Decimal("0.001")
+    assert bybit_effective_min_qty("SOLUSDT", Decimal("150")) == Decimal("0.1")
+
+    # Exact VIP 0 taker (0.055%) vs maker (0.020%) on $1,000 notional
+    maker_fill = bybit_simulate_fill(
+        symbol="ETHUSDT",
+        side="LONG",
+        is_entry=True,
+        mid_price=Decimal("2000"),
+        order_type="LIMIT",
+        qty=Decimal("0.5"),
+    )
+    assert maker_fill.fee == Decimal("0.200000")
+
+    # Extreme volatility Market fill clamps slippage at <= 5.0 bps
+    hi_vol_mkt = bybit_simulate_fill(
+        symbol="SOLUSDT",
+        side="LONG",
+        is_entry=True,
+        mid_price=Decimal("100"),
+        order_type="MARKET",
+        qty=Decimal("10"),
+        volatility_pct=Decimal("0.50"),
+    )
+    # 5.0 bps of $100 * 10 = $0.500000
+    assert hi_vol_mkt.slippage_cost == Decimal("0.500000")
+
+    # Low volatility Stop-Loss fill clamps slippage at >= 1.5 bps; extreme volatility clamps at <= 8.0 bps
+    lo_vol_sl = bybit_simulate_fill(
+        symbol="BTCUSDT",
+        side="LONG",
+        is_entry=False,
+        mid_price=Decimal("10000"),
+        order_type="STOP_LOSS",
+        qty=Decimal("1"),
+        volatility_pct=Decimal("0.0001"),
+    )
+    assert lo_vol_sl.slippage_cost == Decimal("1.500000")
+
+    hi_vol_sl = bybit_simulate_fill(
+        symbol="SOLUSDT",
+        side="LONG",
+        is_entry=False,
+        mid_price=Decimal("100"),
+        order_type="STOP_LOSS",
+        qty=Decimal("10"),
+        volatility_pct=Decimal("0.50"),
+    )
+    assert hi_vol_sl.slippage_cost == Decimal("0.800000")
+
+
+def test_select_stop_out_targets_and_swap_date_string_idempotency() -> None:
+    """Verify select_stop_out_targets picks largest loser first and swap returns/accepts YYYY-MM-DD."""
+    positions = [
+        ForexPositionSnapshot(
+            trade_id=10,
+            symbol="EUR_USD",
+            side="LONG",
+            lots=Decimal("0.01"),
+            entry_price=Decimal("1.1000"),
+            current_price=Decimal("1.0990"),
+            unrealized_pnl=Decimal("-1.00"),
+            used_margin=Decimal("2.20"),
+        ),
+        ForexPositionSnapshot(
+            trade_id=20,
+            symbol="XAU_USD",
+            side="LONG",
+            lots=Decimal("0.01"),
+            entry_price=Decimal("2500.00"),
+            current_price=Decimal("2485.00"),
+            unrealized_pnl=Decimal("-15.00"),
+            used_margin=Decimal("5.00"),
+        ),
+        ForexPositionSnapshot(
+            trade_id=30,
+            symbol="GBP_USD",
+            side="SHORT",
+            lots=Decimal("0.01"),
+            entry_price=Decimal("1.2500"),
+            current_price=Decimal("1.2490"),
+            unrealized_pnl=Decimal("1.00"),
+            used_margin=Decimal("2.50"),
+        ),
+    ]
+    # Total used margin = 9.70; equity = 4.00 -> margin level = 41.24% <= 50%
+    # Closing trade 20 (largest loser, margin 5.00) leaves margin 4.70 -> level = 85.11% > 50%
+    targets = select_stop_out_targets(positions, equity=Decimal("4.00"), stop_out_pct=Decimal("50"))
+    assert [t.trade_id for t in targets] == [20]
+
+    # When healthy (> 50%), returns empty list
+    assert select_stop_out_targets(positions, equity=Decimal("20.00"), stop_out_pct=Decimal("50")) == []
+
+    # Swap date string YYYY-MM-DD idempotency on Wednesday (3x multiplier)
+    wed_swap = forex_calculate_rollover_swap(
+        symbol="EUR_USD",
+        side="LONG",
+        lots=Decimal("0.01"),
+        opened_at=datetime(2026, 6, 3, 18, 0, tzinfo=timezone.utc),
+        now_utc=datetime(2026, 6, 3, 21, 5, tzinfo=timezone.utc),
+        last_swap_applied_date=None,
+    )
+    assert wed_swap.total_multiplier == 3
+    assert wed_swap.applied_date_str == "2026-06-03"
+    assert wed_swap.fee_amount == Decimal("0.195000")
+
+    # Passing YYYY-MM-DD string prevents duplicate application
+    dup_swap = forex_calculate_rollover_swap(
+        symbol="EUR_USD",
+        side="LONG",
+        lots=Decimal("0.01"),
+        opened_at=datetime(2026, 6, 3, 18, 0, tzinfo=timezone.utc),
+        now_utc=datetime(2026, 6, 3, 22, 0, tzinfo=timezone.utc),
+        last_swap_applied_date=wed_swap.applied_date_str,
+    )
+    assert dup_swap.fee_amount == Decimal("0")
+    assert dup_swap.rollover_days_applied == 0
+
+
+def test_estimate_round_turn_friction_bybit_and_forex() -> None:
+    """Verify estimate_round_turn_friction returns exact Decimal metrics for Bybit and Forex."""
+    bybit_est = estimate_round_turn_friction(
+        market="bybit",
+        symbol="SOLUSDT",
+        side="LONG",
+        qty=Decimal("1.0"),
+        entry_price=Decimal("150.00"),
+        sl_price=Decimal("147.00"),
+        tp_price=Decimal("156.00"),
+        leverage=5,
+        profile="bybit_vip0_linear",
+    )
+    assert bybit_est.gross_tp_profit == Decimal("6.000000")
+    assert bybit_est.gross_sl_loss == Decimal("3.000000")
+    assert bybit_est.entry_fee > Decimal("0")
+    assert bybit_est.est_exit_fee_tp == Decimal("0.031200")  # 156 * 1 * 0.00020 (maker TP)
+    assert bybit_est.est_exit_fee_sl > bybit_est.est_exit_fee_tp  # taker SL > maker TP
+    assert bybit_est.total_friction_tp == (
+        bybit_est.entry_fee
+        + bybit_est.est_exit_fee_tp
+        + bybit_est.est_spread_cost
+        + bybit_est.est_slippage_cost
+    )
+    assert bybit_est.net_tp_profit == bybit_est.gross_tp_profit - bybit_est.total_friction_tp
+    assert bybit_est.net_sl_loss > bybit_est.gross_sl_loss
+    assert Decimal("1.5") < bybit_est.net_rr < Decimal("2.0")
+    assert Decimal("0") < bybit_est.fee_drag_pct_of_tp < Decimal("5.0")
+
+    # Forex EUR_USD 0.01 lot ECN: $0.035 entry + $0.035 exit = $0.07 commission
+    fx_est = estimate_round_turn_friction(
+        market="forex",
+        symbol="EUR_USD",
+        side="LONG",
+        qty=Decimal("0.01"),
+        entry_price=Decimal("1.10000"),
+        sl_price=Decimal("1.09800"),
+        tp_price=Decimal("1.10400"),
+        leverage=500,
+        profile="mt5_raw_ecn",
+    )
+    assert fx_est.entry_fee == Decimal("0.035000")
+    assert fx_est.est_exit_fee_tp == Decimal("0.035000")
+    assert fx_est.est_exit_fee_sl == Decimal("0.035000")
+    assert fx_est.gross_tp_profit == Decimal("4.000000")
+    assert fx_est.gross_sl_loss == Decimal("2.000000")
+    assert fx_est.net_tp_profit < fx_est.gross_tp_profit
+    assert fx_est.net_sl_loss > fx_est.gross_sl_loss
+    assert fx_est.net_rr > Decimal("1.5")
+    assert fx_est.fee_drag_pct_of_tp > Decimal("1.5")
+

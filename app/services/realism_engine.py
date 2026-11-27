@@ -218,6 +218,15 @@ class SwapResult:
     total_multiplier: int
     new_last_swap_applied_date: Optional[date]
 
+    @property
+    def applied_date_str(self) -> Optional[str]:
+        """Return YYYY-MM-DD date string for idempotency persistence."""
+        return (
+            self.new_last_swap_applied_date.isoformat()
+            if self.new_last_swap_applied_date is not None
+            else None
+        )
+
 
 @dataclass(frozen=True)
 class ForexPositionSnapshot:
@@ -259,6 +268,24 @@ class OrderSizingResult:
     estimated_risk_usd: Decimal
     reason_code: Optional[str] = None
     details: str = ""
+
+
+@dataclass(frozen=True)
+class RoundTurnFrictionEstimate:
+    """Pre-trade round-turn friction and net R:R estimate for strategy vetoes."""
+
+    entry_fee: Decimal
+    est_exit_fee_tp: Decimal
+    est_exit_fee_sl: Decimal
+    est_spread_cost: Decimal
+    est_slippage_cost: Decimal
+    total_friction_tp: Decimal
+    gross_tp_profit: Decimal
+    net_tp_profit: Decimal
+    gross_sl_loss: Decimal
+    net_sl_loss: Decimal
+    net_rr: Decimal
+    fee_drag_pct_of_tp: Decimal
 
 
 # ---------------------------------------------------------------------------
@@ -487,9 +514,15 @@ def bybit_effective_min_qty(
     symbol: str,
     price: Decimal | int | float | str,
     spec: Optional[BybitContractSpec] = None,
+    is_closing: bool = False,
 ) -> Decimal:
-    """effective_min_qty = max(min_qty, ceil_to_step(min_notional / price, qty_step))."""
+    """effective_min_qty = max(min_qty, ceil_to_step(min_notional / price, qty_step)).
+
+    Closing orders bypass min_notional and only check min_qty.
+    """
     resolved = spec or get_bybit_contract_spec(symbol)
+    if is_closing:
+        return resolved.min_qty
     px = to_decimal(price)
     if px <= ZERO:
         return resolved.min_qty
@@ -528,9 +561,14 @@ def bybit_simulate_fill(
         slippage_cost = ZERO
     else:
         half_spread = mid * (resolved.spread_bps / BPS_DIVISOR) / TWO
-        base_slip_mult = Decimal("1.0") if otype == "STOP_LOSS" else Decimal("0.5")
-        vol_scale = min(Decimal("5"), max(ONE, vol / Decimal("0.002")))
-        slippage = mid * (resolved.spread_bps * base_slip_mult * vol_scale / BPS_DIVISOR)
+        vol_ratio = max(ONE, vol / Decimal("0.002"))
+        if otype == "STOP_LOSS":
+            raw_slip_bps = resolved.spread_bps * Decimal("1.5") * vol_ratio
+            slip_bps = min(Decimal("8.0"), max(Decimal("1.5"), raw_slip_bps))
+        else:
+            raw_slip_bps = resolved.spread_bps * Decimal("0.5") * vol_ratio
+            slip_bps = min(Decimal("5.0"), max(Decimal("0.5"), raw_slip_bps))
+        slippage = mid * (slip_bps / BPS_DIVISOR)
 
         raw_fill = (mid + half_spread + slippage) if is_buy else max(resolved.tick_size, mid - half_spread - slippage)
         filled = quantize_price(raw_fill, resolved.tick_size)
@@ -1097,6 +1135,38 @@ def forex_margin_level_pct(
     return q6((eq / used) * HUNDRED)
 
 
+def select_stop_out_targets(
+    open_positions: Sequence[ForexPositionSnapshot],
+    equity: Decimal | int | float | str,
+    stop_out_pct: Decimal | int | float | str = FOREX_STOP_OUT_LEVEL_PCT,
+) -> list[ForexPositionSnapshot]:
+    """Return open Forex positions ordered by largest unrealized loss first until margin_level_pct > stop_out_pct."""
+    if not open_positions:
+        return []
+    eq = to_decimal(equity)
+    threshold = to_decimal(stop_out_pct)
+    total_used_margin = q6(sum((to_decimal(p.used_margin) for p in open_positions), ZERO))
+    level = forex_margin_level_pct(eq, total_used_margin)
+    if level is None or level > threshold:
+        return []
+
+    ordered = sorted(
+        open_positions,
+        key=lambda p: (to_decimal(p.unrealized_pnl), p.trade_id),
+    )
+    targets: list[ForexPositionSnapshot] = []
+    remaining_margin = total_used_margin
+    for pos in ordered:
+        targets.append(pos)
+        remaining_margin = max(ZERO, remaining_margin - to_decimal(pos.used_margin))
+        if remaining_margin <= ZERO:
+            break
+        projected_level = forex_margin_level_pct(eq, remaining_margin)
+        if projected_level is not None and projected_level > threshold:
+            break
+    return targets
+
+
 def forex_evaluate_margin_status(
     forex_equity: Decimal | int | float | str,
     open_positions: Sequence[ForexPositionSnapshot],
@@ -1121,23 +1191,8 @@ def forex_evaluate_margin_status(
 
     margin_call = level <= FOREX_MARGIN_CALL_LEVEL_PCT
     stop_out = level <= FOREX_STOP_OUT_LEVEL_PCT
-    to_close: list[int] = []
-
-    if stop_out and open_positions:
-        # Sort by unrealized_pnl ascending (most negative = largest loser first), deterministic tie-break by id
-        ordered = sorted(
-            open_positions,
-            key=lambda p: (to_decimal(p.unrealized_pnl), p.trade_id),
-        )
-        remaining_margin = total_used_margin
-        for pos in ordered:
-            to_close.append(pos.trade_id)
-            remaining_margin = max(ZERO, remaining_margin - to_decimal(pos.used_margin))
-            if remaining_margin <= ZERO:
-                break
-            projected_level = forex_margin_level_pct(eq, remaining_margin)
-            if projected_level is not None and projected_level > FOREX_STOP_OUT_LEVEL_PCT:
-                break
+    targets = select_stop_out_targets(open_positions, eq, FOREX_STOP_OUT_LEVEL_PCT) if stop_out else []
+    to_close = [pos.trade_id for pos in targets]
 
     return ForexMarginStatus(
         forex_equity=q6(eq),
@@ -1156,7 +1211,7 @@ def forex_calculate_rollover_swap(
     lots: Decimal | int | float | str,
     opened_at: datetime,
     now_utc: datetime,
-    last_swap_applied_date: Optional[date] = None,
+    last_swap_applied_date: Optional[date | str] = None,
 ) -> SwapResult:
     """Idempotently compute daily Forex rollover swap at 17:00 America/New_York (3x on Wednesdays).
 
@@ -1165,6 +1220,14 @@ def forex_calculate_rollover_swap(
     spec = get_forex_contract_spec(symbol)
     norm_side = normalize_side(side)
     lot_qty = to_decimal(lots)
+
+    parsed_last_date: Optional[date]
+    if isinstance(last_swap_applied_date, str) and last_swap_applied_date.strip():
+        parsed_last_date = date.fromisoformat(last_swap_applied_date.strip())
+    elif isinstance(last_swap_applied_date, date):
+        parsed_last_date = last_swap_applied_date
+    else:
+        parsed_last_date = None
 
     now_ny = ensure_utc(now_utc).astimezone(NY_TZ)
     open_ny = ensure_utc(opened_at).astimezone(NY_TZ)
@@ -1176,8 +1239,8 @@ def forex_calculate_rollover_swap(
     first_eligible_date = open_ny.date() if open_ny.hour < 17 else (open_ny.date() + timedelta(days=1))
 
     start_date = (
-        max(first_eligible_date, last_swap_applied_date + timedelta(days=1))
-        if last_swap_applied_date is not None
+        max(first_eligible_date, parsed_last_date + timedelta(days=1))
+        if parsed_last_date is not None
         else first_eligible_date
     )
 
@@ -1186,12 +1249,12 @@ def forex_calculate_rollover_swap(
             fee_amount=ZERO,
             rollover_days_applied=0,
             total_multiplier=0,
-            new_last_swap_applied_date=last_swap_applied_date,
+            new_last_swap_applied_date=parsed_last_date,
         )
 
     days_applied = 0
     total_multiplier = 0
-    last_applied: Optional[date] = last_swap_applied_date
+    last_applied: Optional[date] = parsed_last_date
 
     cursor = start_date
     while cursor <= latest_eligible_date:
@@ -1394,3 +1457,152 @@ def forex_size_and_validate_order(
         reason_code=None,
         details="Approved",
     )
+
+
+# ---------------------------------------------------------------------------
+# C. Round-Turn Friction Estimator (for Strategy Vetoes)
+# ---------------------------------------------------------------------------
+
+
+def estimate_round_turn_friction(
+    market: str,
+    symbol: str,
+    side: str,
+    qty: Decimal | int | float | str,
+    entry_price: Decimal | int | float | str,
+    sl_price: Decimal | int | float | str,
+    tp_price: Decimal | int | float | str,
+    leverage: int | Decimal = 5,
+    profile: str = "bybit_vip0_linear",
+    entry_order_type: str = "MARKET",
+    tp_order_type: str = "TAKE_PROFIT",
+    sl_order_type: str = "STOP_LOSS",
+    volatility_pct: Optional[Decimal | int | float | str] = None,
+) -> RoundTurnFrictionEstimate:
+    """Estimate round-turn fees, spread, slippage, net TP/SL PnL, net R:R, and TP fee drag.
+
+    For Bybit, `qty` is base asset quantity (e.g. 0.002 BTC or 0.1 SOL).
+    For Forex, `qty` is standard lots (e.g. 0.01 lot).
+    """
+    mkt = (market or "").strip().lower()
+    norm_side = normalize_side(side)
+    direction = ONE if norm_side == "LONG" else -ONE
+    q = to_decimal(qty)
+    entry = to_decimal(entry_price)
+    sl = to_decimal(sl_price)
+    tp = to_decimal(tp_price)
+    _lev = to_decimal(leverage)
+    if _lev <= ZERO:
+        raise ValueError("leverage must be positive")
+    if q <= ZERO or entry <= ZERO:
+        raise ValueError("qty and entry_price must be positive")
+
+    if mkt == "bybit":
+        vol = to_decimal(volatility_pct) if volatility_pct is not None else Decimal("0.0015")
+        entry_fill = bybit_simulate_fill(
+            symbol=symbol,
+            side=norm_side,
+            is_entry=True,
+            mid_price=entry,
+            order_type=entry_order_type,
+            qty=q,
+            volatility_pct=vol,
+        )
+        tp_fill = bybit_simulate_fill(
+            symbol=symbol,
+            side=norm_side,
+            is_entry=False,
+            mid_price=tp,
+            order_type=tp_order_type,
+            qty=q,
+            volatility_pct=vol,
+        )
+        sl_fill = bybit_simulate_fill(
+            symbol=symbol,
+            side=norm_side,
+            is_entry=False,
+            mid_price=sl,
+            order_type=sl_order_type,
+            qty=q,
+            volatility_pct=vol,
+        )
+        gross_tp_profit = q6(max(ZERO, (tp - entry) * q * direction))
+        gross_sl_loss = q6(max(ZERO, (entry - sl) * q * direction))
+    elif mkt == "forex":
+        vol = to_decimal(volatility_pct) if volatility_pct is not None else Decimal("0.0005")
+        resolved_profile = (profile or "mt5_raw_ecn").strip().lower()
+        entry_fill = forex_simulate_fill(
+            symbol=symbol,
+            side=norm_side,
+            is_entry=True,
+            mid_price=entry,
+            order_type=entry_order_type,
+            lots=q,
+            account_profile=resolved_profile,
+            volatility_pct=vol,
+        )
+        tp_fill = forex_simulate_fill(
+            symbol=symbol,
+            side=norm_side,
+            is_entry=False,
+            mid_price=tp,
+            order_type=tp_order_type,
+            lots=q,
+            account_profile=resolved_profile,
+            volatility_pct=vol,
+        )
+        sl_fill = forex_simulate_fill(
+            symbol=symbol,
+            side=norm_side,
+            is_entry=False,
+            mid_price=sl,
+            order_type=sl_order_type,
+            lots=q,
+            account_profile=resolved_profile,
+            volatility_pct=vol,
+        )
+        gross_tp_profit = q6(max(ZERO, forex_gross_pnl(symbol, norm_side, q, entry, tp)))
+        gross_sl_loss = q6(max(ZERO, -forex_gross_pnl(symbol, norm_side, q, entry, sl)))
+    else:
+        raise ValueError(f"Unsupported market '{market}'. Expected 'bybit' or 'forex'.")
+
+    entry_fee = q6(entry_fill.fee)
+    est_exit_fee_tp = q6(tp_fill.fee)
+    est_exit_fee_sl = q6(sl_fill.fee)
+    est_spread_cost = q6(entry_fill.spread_cost + tp_fill.spread_cost)
+    est_slippage_cost = q6(entry_fill.slippage_cost + tp_fill.slippage_cost)
+
+    total_friction_tp = q6(entry_fee + est_exit_fee_tp + est_spread_cost + est_slippage_cost)
+    total_friction_sl = q6(
+        entry_fee
+        + est_exit_fee_sl
+        + entry_fill.spread_cost
+        + sl_fill.spread_cost
+        + entry_fill.slippage_cost
+        + sl_fill.slippage_cost
+    )
+
+    net_tp_profit = q6(gross_tp_profit - total_friction_tp)
+    net_sl_loss = q6(gross_sl_loss + total_friction_sl)
+    net_rr = q6(net_tp_profit / net_sl_loss) if net_sl_loss > ZERO else ZERO
+    fee_drag_pct_of_tp = (
+        q6((total_friction_tp / gross_tp_profit) * HUNDRED)
+        if gross_tp_profit > ZERO
+        else q6(HUNDRED)
+    )
+
+    return RoundTurnFrictionEstimate(
+        entry_fee=entry_fee,
+        est_exit_fee_tp=est_exit_fee_tp,
+        est_exit_fee_sl=est_exit_fee_sl,
+        est_spread_cost=est_spread_cost,
+        est_slippage_cost=est_slippage_cost,
+        total_friction_tp=total_friction_tp,
+        gross_tp_profit=gross_tp_profit,
+        net_tp_profit=net_tp_profit,
+        gross_sl_loss=gross_sl_loss,
+        net_sl_loss=net_sl_loss,
+        net_rr=net_rr,
+        fee_drag_pct_of_tp=fee_drag_pct_of_tp,
+    )
+
