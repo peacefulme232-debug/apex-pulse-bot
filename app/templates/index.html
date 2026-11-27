@@ -2,8 +2,8 @@
 <html lang="en" class="dark">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
-  <title>APEX-PULSE | Multi-Market Algorithmic Desk</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0" />
+  <title>APEX-PULSE | Multi-Market Algorithmic Workspace</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
   <script src="https://unpkg.com/lightweight-charts@5/dist/lightweight-charts.standalone.production.js"></script>
@@ -13,7 +13,7 @@
       theme: {
         extend: {
           colors: {
-            obsidian: '#09090b',
+            obsidian: '#07090d',
           },
           fontFamily: {
             sans: ['Inter', 'ui-sans-serif', 'system-ui', '-apple-system', 'sans-serif'],
@@ -24,591 +24,992 @@
     };
   </script>
   <style>
+    :root {
+      --bg-canvas: #07090d;
+      --sidebar-width: 240px;
+      --sidebar-collapsed-width: 68px;
+    }
+
+    *, *::before, *::after {
+      box-sizing: border-box;
+    }
+
     html, body {
-      background-color: #09090b;
+      background-color: var(--bg-canvas);
       color: #f4f4f5;
       -webkit-font-smoothing: antialiased;
       scroll-behavior: smooth;
+      overflow-x: clip;
     }
+
+    .tabular-nums {
+      font-variant-numeric: tabular-nums;
+    }
+
+    .kpi-value {
+      font-size: clamp(1.125rem, 2.2vw, 1.45rem);
+      line-height: 1.2;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .kpi-value-lg {
+      font-size: clamp(1.25rem, 2.5vw, 1.6rem);
+      line-height: 1.15;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* Static Ambient Emerald/Teal Hero Glow */
+    .ambient-glow {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+      background:
+        radial-gradient(640px 280px at 52% -6%, rgba(16, 185, 129, 0.13), transparent 70%),
+        radial-gradient(460px 260px at 92% 18%, rgba(20, 184, 166, 0.08), transparent 72%);
+    }
+
+    /* Glossy Obsidian Bento Card — Desktop Frosted Liquid Glass */
     .glass-card {
-      background: rgba(24, 24, 27, 0.70);
-      backdrop-filter: blur(14px);
-      -webkit-backdrop-filter: blur(14px);
-      border: 1px solid rgba(63, 63, 70, 0.55);
+      background: linear-gradient(155deg, rgba(255, 255, 255, 0.06) 0%, rgba(15, 19, 27, 0.78) 45%, rgba(9, 12, 18, 0.88) 100%);
+      backdrop-filter: blur(14px) saturate(140%);
+      -webkit-backdrop-filter: blur(14px) saturate(140%);
+      border: 1px solid rgba(255, 255, 255, 0.09);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.11), 0 12px 32px rgba(0, 0, 0, 0.38);
+      min-width: 0;
     }
+
+    .glass-subcard {
+      background: linear-gradient(160deg, rgba(255, 255, 255, 0.04) 0%, rgba(12, 16, 23, 0.86) 55%, rgba(8, 11, 16, 0.94) 100%);
+      border: 1px solid rgba(255, 255, 255, 0.07);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+      min-width: 0;
+    }
+
+    /* Mobile / Touch Performance Lock: ZERO backdrop-filter on scrolling cards */
+    @media (max-width: 1023px), (hover: none) {
+      .glass-card {
+        background: linear-gradient(155deg, rgba(255, 255, 255, 0.075) 0%, rgba(16, 21, 30, 0.94) 36%, rgba(10, 13, 19, 0.98) 100%);
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 8px 22px rgba(0, 0, 0, 0.34);
+        contain: layout paint;
+      }
+    }
+
+    @media (prefers-reduced-transparency: reduce) {
+      .glass-card,
+      .workspace-sidebar,
+      .mobile-topbar {
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+        background: #0d1118 !important;
+      }
+    }
+
+    /* Notion-style Left Workspace Sidebar */
+    .workspace-sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      width: var(--sidebar-width);
+      z-index: 45;
+      background: linear-gradient(180deg, rgba(14, 18, 26, 0.96) 0%, rgba(9, 12, 18, 0.98) 100%);
+      border-right: 1px solid rgba(255, 255, 255, 0.08);
+      box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.04);
+      display: flex;
+      flex-direction: column;
+      transition: width 200ms cubic-bezier(0.22, 1, 0.36, 1), transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+      will-change: transform;
+    }
+
+    .workspace-main {
+      min-width: 0;
+      overflow-x: clip;
+      transition: padding-left 200ms cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    /* Desktop Layout (>= 1024px) */
+    @media (min-width: 1024px) {
+      .workspace-sidebar {
+        transform: translate3d(0, 0, 0);
+      }
+      .workspace-sidebar[data-collapsed="true"] {
+        width: var(--sidebar-collapsed-width);
+      }
+      .workspace-sidebar[data-collapsed="true"] .sb-label,
+      .workspace-sidebar[data-collapsed="true"] .sb-section-title,
+      .workspace-sidebar[data-collapsed="true"] .sb-status-block,
+      .workspace-sidebar[data-collapsed="true"] .sb-brand-text,
+      .workspace-sidebar[data-collapsed="true"] .sb-kbd {
+        display: none;
+      }
+      .workspace-sidebar[data-collapsed="true"] .sb-nav-btn,
+      .workspace-sidebar[data-collapsed="true"] .sb-footer-btn {
+        justify-content: center;
+        padding-left: 0;
+        padding-right: 0;
+      }
+      .workspace-sidebar[data-collapsed="true"] .sb-header-row {
+        justify-content: center;
+      }
+      .workspace-sidebar[data-collapsed="true"] .sb-collapse-icon {
+        transform: rotate(180deg);
+      }
+      .workspace-main {
+        padding-left: var(--sidebar-width);
+      }
+      body[data-sidebar-collapsed="true"] .workspace-main {
+        padding-left: var(--sidebar-collapsed-width);
+      }
+    }
+
+    /* Mobile Drawer (< 1024px) */
+    @media (max-width: 1023px) {
+      .workspace-sidebar {
+        width: 272px;
+        max-width: 84vw;
+        transform: translate3d(-100%, 0, 0);
+        box-shadow: 16px 0 40px rgba(0, 0, 0, 0.65);
+      }
+      .workspace-sidebar.drawer-open {
+        transform: translate3d(0, 0, 0);
+      }
+      .workspace-main {
+        padding-left: 0;
+      }
+    }
+
+    /* Ultra-compact 52px Mobile Top Bar */
+    .mobile-topbar {
+      height: 52px;
+      background: rgba(9, 12, 18, 0.94);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    /* Log Entry Structured 2-Line Wrapping (Zero Horizontal Squeeze) */
+    .log-entry {
+      min-width: 0;
+      width: 100%;
+      border-radius: 0.75rem;
+      background: rgba(15, 20, 29, 0.72);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      padding: 0.55rem 0.7rem;
+    }
+
+    .log-message {
+      min-width: 0;
+      width: 100%;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      line-height: 1.45;
+    }
+
     .no-scrollbar::-webkit-scrollbar { display: none; }
     .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+      }
+    }
   </style>
 </head>
-<body class="min-h-screen bg-[#09090b] text-zinc-100 overflow-x-hidden selection:bg-emerald-500/30 selection:text-emerald-200">
-  <!-- Ambient radial glow -->
-  <div class="pointer-events-none fixed inset-0 overflow-hidden z-0">
-    <div class="absolute -top-40 left-1/2 -translate-x-1/2 h-80 w-[42rem] rounded-full bg-emerald-500/10 blur-3xl"></div>
-    <div class="absolute top-1/3 -right-32 h-72 w-72 rounded-full bg-amber-500/5 blur-3xl"></div>
-  </div>
+<body class="min-h-screen bg-[#07090d] text-zinc-100 selection:bg-emerald-500/30 selection:text-emerald-200">
+  <div class="ambient-glow" aria-hidden="true"></div>
 
-  <div class="relative z-10 max-w-6xl mx-auto px-3 sm:px-6 pb-20">
-    <!-- Top Sticky Bar -->
-    <header class="sticky top-0 z-30 pt-3 pb-3 bg-[#09090b]/85 backdrop-blur-md border-b border-zinc-800/70">
-      <div class="flex flex-wrap items-center justify-between gap-2.5">
-        <!-- Logo + Paper Mode Pill + Heartbeat -->
-        <div class="flex items-center gap-2.5">
-          <div class="flex items-center gap-2">
-            <div class="h-8 w-8 rounded-xl bg-gradient-to-br from-emerald-400 to-emerald-600 flex items-center justify-center shadow-lg shadow-emerald-500/20">
-              <svg class="w-4 h-4 text-zinc-950" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M3 12h3l3-7 4 14 3-7h5" />
-              </svg>
-            </div>
-            <div>
-              <h1 class="text-sm sm:text-base font-bold tracking-tight text-white leading-none">APEX-PULSE</h1>
-              <div class="flex items-center gap-1.5 mt-0.5">
-                <span id="heartbeat-dot" class="inline-block h-2 w-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                <span id="heartbeat-text" class="text-[10px] font-mono text-zinc-400 uppercase tracking-wider">LIVE HEARTBEAT</span>
-              </div>
-            </div>
+  <!-- Mobile Slide-Out Drawer Backdrop -->
+  <div
+    id="drawer-backdrop"
+    onclick="closeMobileDrawer()"
+    class="hidden fixed inset-0 z-40 bg-black/70 lg:hidden transition-opacity"
+    aria-hidden="true"
+  ></div>
+
+  <!-- NOTION-STYLE COLLAPSIBLE LEFT SIDEBAR (Desktop Rail + Mobile Slide-Out Drawer) -->
+  <aside id="workspace-sidebar" data-collapsed="false" class="workspace-sidebar">
+    <!-- 1) Workspace Header -->
+    <div class="sb-header-row px-3.5 h-[56px] flex items-center justify-between gap-2 border-b border-white/[0.07] shrink-0">
+      <div class="flex items-center gap-2.5 min-w-0">
+        <div class="h-8 w-8 rounded-xl bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center shadow-lg shadow-emerald-500/20 shrink-0">
+          <svg class="w-4 h-4 text-zinc-950" fill="none" stroke="currentColor" stroke-width="2.6" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3 12h3l3-7 4 14 3-7h5" />
+          </svg>
+        </div>
+        <div class="sb-brand-text min-w-0">
+          <div class="text-sm font-bold tracking-tight text-white truncate leading-none">APEX-PULSE</div>
+          <div class="flex items-center gap-1.5 mt-1">
+            <span id="heartbeat-dot" class="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0"></span>
+            <span id="heartbeat-text" class="text-[10px] font-mono text-zinc-400 uppercase tracking-wider truncate">LIVE HEARTBEAT</span>
           </div>
+        </div>
+      </div>
 
-          <!-- Pulsing PAPER / DEMO MODE safety pill -->
-          <span id="mode-pill" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold tracking-wide bg-amber-500/15 text-amber-400 border border-amber-500/30">
-            <span class="h-1.5 w-1.5 rounded-full bg-amber-400 animate-ping"></span>
-            <span id="mode-pill-text">PAPER / DEMO MODE</span>
+      <!-- Desktop Collapse Toggle -->
+      <button
+        type="button"
+        onclick="toggleSidebarCollapse()"
+        title="Collapse / Expand Sidebar"
+        aria-label="Toggle Sidebar Width"
+        class="hidden lg:inline-flex items-center justify-center h-7 w-7 rounded-lg text-zinc-400 hover:text-white hover:bg-white/[0.07] transition shrink-0"
+      >
+        <svg class="sb-collapse-icon w-4 h-4 transition-transform duration-200" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
+        </svg>
+      </button>
+
+      <!-- Mobile Close Drawer Button -->
+      <button
+        type="button"
+        onclick="closeMobileDrawer()"
+        aria-label="Close Menu"
+        class="lg:hidden inline-flex items-center justify-center h-7 w-7 rounded-lg text-zinc-400 hover:text-white hover:bg-white/[0.07] transition shrink-0"
+      >
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
+
+    <!-- Scrollable Sidebar Body -->
+    <div class="flex-1 overflow-y-auto no-scrollbar px-2.5 py-3 space-y-5">
+      <!-- Quick Jump Trigger -->
+      <div>
+        <button
+          type="button"
+          onclick="openQuickJump()"
+          class="sb-nav-btn w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded-xl text-xs text-zinc-400 bg-white/[0.03] hover:bg-white/[0.07] hover:text-zinc-100 border border-white/[0.07] transition"
+        >
+          <span class="flex items-center gap-2 min-w-0">
+            <svg class="w-3.5 h-3.5 shrink-0 text-zinc-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-4.35-4.35m0 0A7.5 7.5 0 105.25 5.25a7.5 7.5 0 0011.4 11.4z" />
+            </svg>
+            <span class="sb-label truncate">Quick Jump...</span>
           </span>
+          <kbd class="sb-kbd text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/[0.06] text-zinc-400 border border-white/[0.08]">⌘K</kbd>
+        </button>
+      </div>
 
-          <!-- Broker Connection & Forex Session Status Pills -->
-          <div class="hidden sm:flex items-center gap-1.5">
-            <span id="pill-bybit" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-mono font-semibold bg-zinc-900 text-zinc-300 border border-zinc-700/80">
-              <span id="pill-bybit-dot" class="h-1.5 w-1.5 rounded-full bg-amber-400"></span>
-              <span id="pill-bybit-text">BYBIT: PAPER</span>
+      <!-- 2) WORKSPACE Section -->
+      <div>
+        <p class="sb-section-title px-2.5 mb-1.5 text-[10px] font-mono font-semibold uppercase tracking-widest text-zinc-500">Workspace</p>
+        <nav class="space-y-1" aria-label="Workspace Views">
+          <button type="button" data-view="terminal" onclick="setView('terminal'); closeMobileDrawer();" class="sb-nav-btn view-tab w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs font-medium transition">
+            <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" />
+            </svg>
+            <span class="sb-label truncate">Live Terminal</span>
+          </button>
+
+          <button type="button" data-view="summarizer" onclick="setView('summarizer'); closeMobileDrawer();" class="sb-nav-btn view-tab w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs font-medium transition">
+            <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            <span class="sb-label truncate">Bot Summarizer</span>
+          </button>
+
+          <button type="button" data-view="lab" onclick="setView('lab'); closeMobileDrawer();" class="sb-nav-btn view-tab w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs font-medium transition">
+            <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9.75 3v4.5m4.5-4.5v4.5M7.5 7.5h9l2.4 10.2A2.25 2.25 0 0116.71 20.5H7.29a2.25 2.25 0 01-2.19-2.8L7.5 7.5z" />
+            </svg>
+            <span class="sb-label truncate">Strategy Lab</span>
+          </button>
+        </nav>
+      </div>
+
+      <!-- 3) MARKET SCOPE Section -->
+      <div>
+        <p class="sb-section-title px-2.5 mb-1.5 text-[10px] font-mono font-semibold uppercase tracking-widest text-zinc-500">Market Scope</p>
+        <div class="space-y-1">
+          <button type="button" data-market="ALL" onclick="setMarket('ALL'); closeMobileDrawer();" class="sb-nav-btn market-tab w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-xl text-xs font-medium transition">
+            <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9 9 0 100-18 9 9 0 000 18zm0 0c2.2-2.4 3.5-5.6 3.5-9S14.2 5.4 12 3m0 18c-2.2-2.4-3.5-5.6-3.5-9S9.8 5.4 12 3M3.5 9h17M3.5 15h17" />
+            </svg>
+            <span class="sb-label truncate">All Markets</span>
+          </button>
+
+          <button type="button" data-market="BYBIT" onclick="setMarket('BYBIT'); closeMobileDrawer();" class="sb-nav-btn market-tab w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-xl text-xs font-medium transition">
+            <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+            </svg>
+            <span class="sb-label truncate">Bybit (Crypto)</span>
+          </button>
+
+          <button type="button" data-market="FOREX" onclick="setMarket('FOREX'); closeMobileDrawer();" class="sb-nav-btn market-tab w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-xl text-xs font-medium transition">
+            <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v12m-3-2.818l.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33" />
+            </svg>
+            <span class="sb-label truncate">Forex</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 4) SYSTEM STATUS Section -->
+      <div class="sb-status-block">
+        <p class="sb-section-title px-2.5 mb-2 text-[10px] font-mono font-semibold uppercase tracking-widest text-zinc-500">System Status</p>
+        <div class="rounded-xl bg-white/[0.025] border border-white/[0.07] p-2.5 space-y-2 text-[11px] font-mono">
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-zinc-500">Mode</span>
+            <span id="mode-pill" class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30 whitespace-nowrap">
+              <span class="h-1.5 w-1.5 rounded-full bg-amber-400"></span>
+              <span id="mode-pill-text">PAPER / DEMO MODE</span>
             </span>
-            <span id="pill-forex" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-mono font-semibold bg-zinc-900 text-zinc-300 border border-zinc-700/80">
-              <span id="pill-forex-dot" class="h-1.5 w-1.5 rounded-full bg-amber-400"></span>
-              <span id="pill-forex-text">FOREX: PAPER</span>
+          </div>
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-zinc-500">Bybit</span>
+            <span class="inline-flex items-center gap-1.5 text-zinc-200 truncate">
+              <span id="pill-bybit-dot" class="h-1.5 w-1.5 rounded-full bg-amber-400 shrink-0"></span>
+              <span id="pill-bybit-text" class="truncate">PAPER</span>
             </span>
-            <span id="pill-fx-session" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-mono font-semibold bg-zinc-900 text-zinc-300 border border-zinc-700/80">
-              <span id="pill-fx-session-dot" class="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
-              <span id="pill-fx-session-text">FX GUARD: CHECKING</span>
+          </div>
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-zinc-500">Forex</span>
+            <span class="inline-flex items-center gap-1.5 text-zinc-200 truncate">
+              <span id="pill-forex-dot" class="h-1.5 w-1.5 rounded-full bg-amber-400 shrink-0"></span>
+              <span id="pill-forex-text" class="truncate">PAPER</span>
+            </span>
+          </div>
+          <div class="flex items-center justify-between gap-2 pt-1.5 border-t border-white/[0.06]">
+            <span class="text-zinc-500 shrink-0">Guard</span>
+            <span class="inline-flex items-center gap-1.5 text-zinc-200 min-w-0">
+              <span id="pill-fx-session-dot" class="h-1.5 w-1.5 rounded-full bg-emerald-400 shrink-0"></span>
+              <span id="pill-fx-session-text" class="truncate text-right">Checking</span>
             </span>
           </div>
         </div>
+      </div>
+    </div>
 
-        <!-- Kill Switch / Resume / Lock Controls -->
-        <div class="flex items-center gap-2">
-          <button id="btn-logout" onclick="logoutDashboard()" title="Lock Dashboard" class="hidden items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold bg-zinc-900/90 text-zinc-300 border border-zinc-700/80 hover:bg-zinc-800 hover:text-white active:scale-95 transition">
-            <svg class="w-3.5 h-3.5 text-zinc-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-            </svg>
-            <span class="hidden sm:inline">Lock</span>
-          </button>
-          <button id="btn-resume" onclick="resumeBot()" class="hidden items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30 active:scale-95 transition">
-            <span>▶</span>
-            <span>Resume Paper Loop</span>
-          </button>
-          <button id="btn-kill-switch" onclick="openKillModal()" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold tracking-wide bg-rose-500/20 text-rose-300 border border-rose-500/40 hover:bg-rose-500/30 active:scale-95 transition shadow-sm shadow-rose-500/10">
-            <span class="h-2 w-2 rounded-full bg-rose-500"></span>
-            <span>KILL SWITCH</span>
-          </button>
+    <!-- 5) Sidebar Footer: Lock Terminal + Resume / Kill Switch -->
+    <div class="p-2.5 border-t border-white/[0.07] space-y-2 shrink-0">
+      <button
+        id="btn-logout"
+        type="button"
+        onclick="logoutDashboard()"
+        title="Lock Terminal"
+        class="sb-footer-btn hidden w-full items-center justify-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold bg-white/[0.04] text-zinc-300 border border-white/[0.09] hover:bg-white/[0.08] hover:text-white active:scale-[0.98] transition"
+      >
+        <svg class="w-3.5 h-3.5 text-zinc-400 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+        </svg>
+        <span class="sb-label">Lock Terminal</span>
+      </button>
+
+      <button
+        id="btn-resume"
+        type="button"
+        onclick="resumeBot()"
+        title="Resume Paper Loop"
+        class="sb-footer-btn hidden w-full items-center justify-center gap-2 px-3 py-2 rounded-xl text-xs font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30 active:scale-[0.98] transition"
+      >
+        <span class="shrink-0">▶</span>
+        <span class="sb-label">Resume Paper Loop</span>
+      </button>
+
+      <button
+        id="btn-kill-switch"
+        type="button"
+        onclick="openKillModal()"
+        title="Emergency Kill Switch"
+        class="sb-footer-btn w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-xs font-bold tracking-wide bg-rose-500/18 text-rose-300 border border-rose-500/40 hover:bg-rose-500/28 active:scale-[0.98] transition shadow-sm shadow-rose-500/10"
+      >
+        <span class="h-2 w-2 rounded-full bg-rose-500 shrink-0"></span>
+        <span class="sb-label">KILL SWITCH</span>
+      </button>
+    </div>
+  </aside>
+
+  <!-- MAIN WORKSPACE COLUMN -->
+  <div id="workspace-main" class="workspace-main relative z-10 min-h-screen flex flex-col">
+    <!-- ULTRA-COMPACT 52px MOBILE STICKY TOP BAR (< 1024px ONLY) -->
+    <header id="mobile-topbar" class="mobile-topbar lg:hidden sticky top-0 z-30 px-3 flex items-center justify-between gap-2">
+      <div class="flex items-center gap-2 min-w-0">
+        <button
+          type="button"
+          onclick="openMobileDrawer()"
+          aria-label="Open Navigation Menu"
+          class="inline-flex items-center justify-center h-8 w-8 rounded-lg bg-white/[0.05] border border-white/[0.08] text-zinc-200 active:scale-95 transition shrink-0"
+        >
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+        </button>
+        <div class="flex items-center gap-1.5 min-w-0">
+          <span class="text-sm font-bold tracking-tight text-white truncate">APEX-PULSE</span>
+          <span id="mobile-hb-dot" class="inline-block h-2 w-2 rounded-full bg-emerald-400 animate-pulse shrink-0"></span>
+        </div>
+        <span id="mobile-mode-pill" class="px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30 shrink-0">PAPER</span>
+      </div>
+
+      <div class="flex items-center gap-1.5 shrink-0">
+        <button
+          id="btn-logout-mobile"
+          type="button"
+          onclick="logoutDashboard()"
+          aria-label="Lock Terminal"
+          class="hidden items-center justify-center h-8 w-8 rounded-lg bg-white/[0.05] border border-white/[0.09] text-zinc-300 active:scale-95 transition"
+        >
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+          </svg>
+        </button>
+        <button
+          id="btn-resume-mobile"
+          type="button"
+          onclick="resumeBot()"
+          class="hidden items-center gap-1 px-2.5 h-8 rounded-lg text-[11px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 active:scale-95 transition"
+        >
+          <span>▶</span>
+          <span>RESUME</span>
+        </button>
+        <button
+          id="btn-kill-switch-mobile"
+          type="button"
+          onclick="openKillModal()"
+          class="inline-flex items-center gap-1 px-2.5 h-8 rounded-lg text-[11px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40 active:scale-95 transition"
+        >
+          <span class="h-1.5 w-1.5 rounded-full bg-rose-500"></span>
+          <span>KILL</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- SCROLLING CONTENT CONTAINER -->
+    <main class="flex-1 w-full max-w-[1360px] mx-auto px-3 sm:px-5 lg:px-7 pt-3 lg:pt-6 pb-20 min-w-0">
+      <!-- Mobile Non-Sticky Slim Segmented Pill Strip (Scrolls naturally out of the way) -->
+      <div id="mobile-nav-strip" class="lg:hidden mb-3.5 space-y-2">
+        <div class="grid grid-cols-3 gap-1 p-1 rounded-xl bg-white/[0.03] border border-white/[0.07]">
+          <button type="button" data-view="terminal" onclick="setView('terminal')" class="mobile-view-tab py-1.5 rounded-lg text-xs font-semibold transition text-center">Live</button>
+          <button type="button" data-view="summarizer" onclick="setView('summarizer')" class="mobile-view-tab py-1.5 rounded-lg text-xs font-semibold transition text-center">Summary</button>
+          <button type="button" data-view="lab" onclick="setView('lab')" class="mobile-view-tab py-1.5 rounded-lg text-xs font-semibold transition text-center">Lab</button>
+        </div>
+        <div class="grid grid-cols-3 gap-1 p-1 rounded-xl bg-white/[0.025] border border-white/[0.06]">
+          <button type="button" data-market="ALL" onclick="setMarket('ALL')" class="mobile-market-tab py-1 rounded-lg text-[11px] font-mono font-semibold transition text-center">All</button>
+          <button type="button" data-market="BYBIT" onclick="setMarket('BYBIT')" class="mobile-market-tab py-1 rounded-lg text-[11px] font-mono font-semibold transition text-center">Crypto</button>
+          <button type="button" data-market="FOREX" onclick="setMarket('FOREX')" class="mobile-market-tab py-1 rounded-lg text-[11px] font-mono font-semibold transition text-center">Forex</button>
         </div>
       </div>
 
       <!-- Kill Switch Active Banner -->
-      <div id="kill-banner" class="hidden mt-2.5 px-3 py-2 rounded-xl bg-rose-950/70 border border-rose-500/40 text-rose-200 text-xs flex items-center justify-between gap-2">
-        <div class="flex items-center gap-2">
-          <span class="font-bold text-rose-400">EMERGENCY LOCKED:</span>
-          <span id="kill-reason" class="text-rose-200/90">Kill Switch Active</span>
+      <div id="kill-banner" class="hidden mb-4 px-3.5 py-2.5 rounded-2xl bg-rose-950/75 border border-rose-500/40 text-rose-200 text-xs flex flex-wrap items-center justify-between gap-2">
+        <div class="flex items-center gap-2 min-w-0">
+          <span class="font-bold text-rose-400 shrink-0">EMERGENCY LOCKED:</span>
+          <span id="kill-reason" class="text-rose-200/90 break-words">Kill Switch Active</span>
         </div>
         <span class="text-[10px] font-mono uppercase text-rose-400 shrink-0">TRADING HALTED</span>
       </div>
 
-      <!-- Navigation Bar: View Switcher + Market Filter Tabs -->
-      <div class="mt-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-        <!-- View Switcher -->
-        <div class="flex items-center gap-1 bg-zinc-900/90 p-1 rounded-xl border border-zinc-800/80 w-full sm:w-fit">
-          <button data-view="terminal" onclick="setView('terminal')" class="view-tab flex-1 sm:flex-none px-3 py-1.5 rounded-lg text-xs font-semibold transition">Live Terminal</button>
-          <button data-view="summarizer" onclick="setView('summarizer')" class="view-tab flex-1 sm:flex-none px-3 py-1.5 rounded-lg text-xs font-semibold transition">Bot Summarizer</button>
-          <button data-view="lab" onclick="setView('lab')" class="view-tab flex-1 sm:flex-none px-3 py-1.5 rounded-lg text-xs font-semibold transition">Strategy Lab</button>
-        </div>
+      <!-- ================================================================ -->
+      <!-- VIEW 1: LIVE TERMINAL                                            -->
+      <!-- ================================================================ -->
+      <div id="view-terminal" class="space-y-4">
+        <!-- 12-Column Bento KPI Grid -->
+        <section class="grid grid-cols-2 lg:grid-cols-12 gap-3.5 sm:gap-4">
+          <!-- Total Equity -->
+          <div class="glass-card rounded-2xl p-3.5 sm:p-4 col-span-2 lg:col-span-3">
+            <p class="text-[10px] font-mono font-semibold uppercase tracking-wider text-zinc-400">Total Equity</p>
+            <p id="kpi-equity" class="mt-1.5 kpi-value-lg font-bold font-mono tracking-tight text-white">$20,000.00</p>
+            <p id="kpi-equity-split" class="mt-1 text-[11px] font-mono text-zinc-400 truncate tabular-nums">Bybit $10,000 · FX $10,000</p>
+          </div>
 
-        <!-- Market Filter Tabs -->
-        <div class="flex items-center gap-1.5 bg-zinc-900/80 p-1 rounded-xl border border-zinc-800/80 w-full sm:w-fit">
-          <button data-market="ALL" onclick="setMarket('ALL')" class="market-tab flex-1 sm:flex-none px-4 py-1.5 rounded-lg text-xs font-semibold transition">ALL</button>
-          <button data-market="BYBIT" onclick="setMarket('BYBIT')" class="market-tab flex-1 sm:flex-none px-4 py-1.5 rounded-lg text-xs font-semibold transition">BYBIT (CRYPTO)</button>
-          <button data-market="FOREX" onclick="setMarket('FOREX')" class="market-tab flex-1 sm:flex-none px-4 py-1.5 rounded-lg text-xs font-semibold transition">FOREX</button>
-        </div>
-      </div>
-    </header>
+          <!-- Today's PnL -->
+          <div class="glass-card rounded-2xl p-3.5 sm:p-4 col-span-1 lg:col-span-2">
+            <p class="text-[10px] font-mono font-semibold uppercase tracking-wider text-zinc-400">Today's PnL</p>
+            <p id="kpi-pnl-usd" class="mt-1.5 kpi-value font-bold font-mono text-emerald-400">+$0.00</p>
+            <p id="kpi-pnl-pct" class="mt-1 text-xs font-mono text-emerald-400/80 tabular-nums">+0.00%</p>
+          </div>
 
-    <!-- LIVE TERMINAL VIEW -->
-    <div id="view-terminal">
-    <!-- Bento KPI Grid -->
-    <section class="mt-4 grid grid-cols-2 lg:grid-cols-5 gap-3">
-      <!-- Total Equity -->
-      <div class="glass-card rounded-2xl p-3.5 col-span-2 lg:col-span-1">
-        <p class="text-[11px] font-medium uppercase tracking-wider text-zinc-400">Total Equity</p>
-        <p id="kpi-equity" class="mt-1 text-2xl font-bold font-mono tracking-tight text-white">$20,000.00</p>
-        <p id="kpi-equity-split" class="mt-1 text-[11px] font-mono text-zinc-400 truncate">Bybit $10,000 · FX $10,000</p>
-      </div>
+          <!-- Win Rate -->
+          <div class="glass-card rounded-2xl p-3.5 sm:p-4 col-span-1 lg:col-span-2">
+            <p class="text-[10px] font-mono font-semibold uppercase tracking-wider text-zinc-400">Win Rate</p>
+            <p id="kpi-win-rate" class="mt-1.5 kpi-value font-bold font-mono text-white">0.0%</p>
+            <p class="mt-1 text-[11px] text-zinc-400">Closed executions</p>
+          </div>
 
-      <!-- Today's PnL -->
-      <div class="glass-card rounded-2xl p-3.5">
-        <p class="text-[11px] font-medium uppercase tracking-wider text-zinc-400">Today's PnL</p>
-        <p id="kpi-pnl-usd" class="mt-1 text-xl font-bold font-mono text-emerald-400">+$0.00</p>
-        <p id="kpi-pnl-pct" class="mt-1 text-xs font-mono text-emerald-400/80">+0.00%</p>
-      </div>
+          <!-- Active Market Regime -->
+          <div class="glass-card rounded-2xl p-3.5 sm:p-4 col-span-2 sm:col-span-1 lg:col-span-3">
+            <p class="text-[10px] font-mono font-semibold uppercase tracking-wider text-zinc-400">Active Regime</p>
+            <div class="mt-1.5">
+              <span id="kpi-regime" class="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                Trending Up
+              </span>
+            </div>
+            <p class="mt-1.5 text-[11px] text-zinc-500">Auto-detected telemetry</p>
+          </div>
 
-      <!-- Win Rate -->
-      <div class="glass-card rounded-2xl p-3.5">
-        <p class="text-[11px] font-medium uppercase tracking-wider text-zinc-400">Win Rate</p>
-        <p id="kpi-win-rate" class="mt-1 text-xl font-bold font-mono text-white">0.0%</p>
-        <p class="mt-1 text-[11px] text-zinc-400">Closed executions</p>
-      </div>
+          <!-- Daily Loss Limit Progress -->
+          <div class="glass-card rounded-2xl p-3.5 sm:p-4 col-span-2 sm:col-span-1 lg:col-span-2">
+            <div class="flex items-center justify-between gap-2">
+              <p class="text-[10px] font-mono font-semibold uppercase tracking-wider text-zinc-400 truncate">Daily Loss</p>
+              <span id="kpi-dd-label" class="text-[11px] font-mono text-zinc-300 whitespace-nowrap tabular-nums">0.00% / 3.00%</span>
+            </div>
+            <div class="mt-2.5 h-2 w-full rounded-full bg-white/[0.08] overflow-hidden">
+              <div id="kpi-dd-bar" class="h-full rounded-full bg-emerald-500 transition-all duration-300" style="width: 0%;"></div>
+            </div>
+            <p class="mt-1.5 text-[11px] text-zinc-500">Auto-lock at cap</p>
+          </div>
+        </section>
 
-      <!-- Active Market Regime -->
-      <div class="glass-card rounded-2xl p-3.5 col-span-2 lg:col-span-1">
-        <p class="text-[11px] font-medium uppercase tracking-wider text-zinc-400">Active Regime</p>
-        <div class="mt-1.5">
-          <span id="kpi-regime" class="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-mono font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-            TRENDING_UP
-          </span>
-        </div>
-        <p class="mt-1.5 text-[11px] text-zinc-500">Auto-detected telemetry</p>
-      </div>
+        <!-- Primary Charts & Confluence Bento Row (12-Column Grid) -->
+        <section class="grid grid-cols-1 lg:grid-cols-12 gap-3.5 sm:gap-4">
+          <!-- PrimeXBT-Style Live Price Action Chart (8 cols on desktop) -->
+          <div class="glass-card rounded-2xl p-4 lg:col-span-8">
+            <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+              <div class="flex items-center gap-2 min-w-0">
+                <span class="h-2 w-2 rounded-full bg-emerald-400 shrink-0"></span>
+                <h2 class="text-sm font-semibold text-white truncate">Live Price Action</h2>
+                <span id="chart-active-badge" class="text-[10px] font-mono px-2 py-0.5 rounded bg-white/[0.06] text-zinc-300 border border-white/[0.09] whitespace-nowrap">BTCUSDT · 15m</span>
+                <span id="chart-trade-pill" class="hidden text-[10px] font-mono px-2 py-0.5 rounded bg-sky-500/15 text-sky-300 border border-sky-500/30 whitespace-nowrap">ACTIVE TRADE</span>
+              </div>
+              <div class="flex items-center gap-1 bg-white/[0.04] p-1 rounded-xl border border-white/[0.08] w-fit">
+                <button type="button" data-interval="15m" onclick="setChartInterval('15m')" class="chart-iv-btn px-2.5 py-1 rounded-lg text-[11px] font-mono font-semibold transition">15m</button>
+                <button type="button" data-interval="1h" onclick="setChartInterval('1h')" class="chart-iv-btn px-2.5 py-1 rounded-lg text-[11px] font-mono font-semibold transition">1h</button>
+                <button type="button" data-interval="4h" onclick="setChartInterval('4h')" class="chart-iv-btn px-2.5 py-1 rounded-lg text-[11px] font-mono font-semibold transition">4h</button>
+              </div>
+            </div>
 
-      <!-- Daily Loss Limit Progress -->
-      <div class="glass-card rounded-2xl p-3.5 col-span-2 lg:col-span-1">
-        <div class="flex items-center justify-between">
-          <p class="text-[11px] font-medium uppercase tracking-wider text-zinc-400">Daily Loss Limit</p>
-          <span id="kpi-dd-label" class="text-[11px] font-mono text-zinc-300">0.00% / 3.00%</span>
-        </div>
-        <div class="mt-2.5 h-2 w-full rounded-full bg-zinc-800 overflow-hidden">
-          <div id="kpi-dd-bar" class="h-full rounded-full bg-emerald-500 transition-all duration-300" style="width: 0%;"></div>
-        </div>
-        <p class="mt-1.5 text-[11px] text-zinc-500">Auto-lock at max threshold</p>
-      </div>
-    </section>
+            <!-- Quick Symbol Selector Pills -->
+            <div class="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-2.5">
+              <button type="button" data-symbol="BTCUSDT" onclick="setChartSymbol('BTCUSDT')" class="chart-sym-btn shrink-0 px-3 py-1 rounded-lg text-[11px] font-mono font-semibold transition">BTCUSDT</button>
+              <button type="button" data-symbol="ETHUSDT" onclick="setChartSymbol('ETHUSDT')" class="chart-sym-btn shrink-0 px-3 py-1 rounded-lg text-[11px] font-mono font-semibold transition">ETHUSDT</button>
+              <button type="button" data-symbol="SOLUSDT" onclick="setChartSymbol('SOLUSDT')" class="chart-sym-btn shrink-0 px-3 py-1 rounded-lg text-[11px] font-mono font-semibold transition">SOLUSDT</button>
+              <button type="button" data-symbol="EUR_USD" onclick="setChartSymbol('EUR_USD')" class="chart-sym-btn shrink-0 px-3 py-1 rounded-lg text-[11px] font-mono font-semibold transition">EUR_USD</button>
+              <button type="button" data-symbol="GBP_USD" onclick="setChartSymbol('GBP_USD')" class="chart-sym-btn shrink-0 px-3 py-1 rounded-lg text-[11px] font-mono font-semibold transition">GBP_USD</button>
+              <button type="button" data-symbol="XAU_USD" onclick="setChartSymbol('XAU_USD')" class="chart-sym-btn shrink-0 px-3 py-1 rounded-lg text-[11px] font-mono font-semibold transition">XAU_USD</button>
+            </div>
 
-    <!-- PrimeXBT-Style Live Price Action Chart -->
-    <section class="mt-4 glass-card rounded-2xl p-4">
-      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 mb-3">
-        <div class="flex items-center gap-2">
-          <span class="h-2 w-2 rounded-full bg-emerald-400"></span>
-          <h2 class="text-sm font-semibold text-white">Live Price Action</h2>
-          <span id="chart-active-badge" class="text-[10px] font-mono px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 border border-zinc-700/70">BTCUSDT · 15m</span>
-          <span id="chart-trade-pill" class="hidden text-[10px] font-mono px-2 py-0.5 rounded bg-sky-500/15 text-sky-300 border border-sky-500/30">ACTIVE TRADE</span>
-        </div>
-        <div class="flex items-center gap-1 bg-zinc-900/90 p-1 rounded-xl border border-zinc-800/80 w-fit">
-          <button data-interval="15m" onclick="setChartInterval('15m')" class="chart-iv-btn px-2.5 py-1 rounded-lg text-[11px] font-mono font-semibold transition">15m</button>
-          <button data-interval="1h" onclick="setChartInterval('1h')" class="chart-iv-btn px-2.5 py-1 rounded-lg text-[11px] font-mono font-semibold transition">1h</button>
-          <button data-interval="4h" onclick="setChartInterval('4h')" class="chart-iv-btn px-2.5 py-1 rounded-lg text-[11px] font-mono font-semibold transition">4h</button>
-        </div>
-      </div>
-
-      <!-- Quick Symbol Selector Pills -->
-      <div class="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-2.5">
-        <button data-symbol="BTCUSDT" onclick="setChartSymbol('BTCUSDT')" class="chart-sym-btn shrink-0 px-3 py-1 rounded-lg text-[11px] font-mono font-semibold transition">BTCUSDT</button>
-        <button data-symbol="ETHUSDT" onclick="setChartSymbol('ETHUSDT')" class="chart-sym-btn shrink-0 px-3 py-1 rounded-lg text-[11px] font-mono font-semibold transition">ETHUSDT</button>
-        <button data-symbol="SOLUSDT" onclick="setChartSymbol('SOLUSDT')" class="chart-sym-btn shrink-0 px-3 py-1 rounded-lg text-[11px] font-mono font-semibold transition">SOLUSDT</button>
-        <button data-symbol="EUR_USD" onclick="setChartSymbol('EUR_USD')" class="chart-sym-btn shrink-0 px-3 py-1 rounded-lg text-[11px] font-mono font-semibold transition">EUR_USD</button>
-        <button data-symbol="GBP_USD" onclick="setChartSymbol('GBP_USD')" class="chart-sym-btn shrink-0 px-3 py-1 rounded-lg text-[11px] font-mono font-semibold transition">GBP_USD</button>
-        <button data-symbol="XAU_USD" onclick="setChartSymbol('XAU_USD')" class="chart-sym-btn shrink-0 px-3 py-1 rounded-lg text-[11px] font-mono font-semibold transition">XAU_USD</button>
-      </div>
-
-      <div id="live-candlestick-chart" class="h-72 sm:h-80 w-full rounded-xl overflow-hidden border border-zinc-800/80 bg-[#09090b]"></div>
-      <div class="mt-2 flex flex-wrap items-center justify-between gap-2 text-[10px] font-mono text-zinc-500">
-        <div class="flex items-center gap-3">
-          <span class="inline-flex items-center gap-1"><span class="h-1.5 w-3 rounded-sm bg-sky-400"></span>ENTRY</span>
-          <span class="inline-flex items-center gap-1"><span class="h-1.5 w-3 rounded-sm bg-rose-500"></span>STOP LOSS</span>
-          <span class="inline-flex items-center gap-1"><span class="h-1.5 w-3 rounded-sm bg-emerald-500"></span>TAKE PROFIT</span>
-        </div>
-        <span>Charts powered by TradingView Lightweight Charts</span>
-      </div>
-    </section>
-
-    <!-- Live Equity Curve -->
-    <section class="mt-4 glass-card rounded-2xl p-4">
-      <div class="flex items-center justify-between mb-3">
-        <div>
-          <h2 class="text-sm font-semibold text-white">Live Equity Curve</h2>
-          <p class="text-xs text-zinc-400">Simulated multi-market account trajectory</p>
-        </div>
-        <span class="text-[11px] font-mono px-2 py-0.5 rounded-md bg-zinc-800 text-zinc-300">3s LIVE POLL</span>
-      </div>
-      <div class="h-56 sm:h-64 w-full">
-        <canvas id="equityChart"></canvas>
-      </div>
-    </section>
-
-    <!-- Institutional Confluence Radar -->
-    <section class="mt-4 glass-card rounded-2xl p-4">
-      <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
-        <div class="flex items-center gap-2">
-          <span class="h-2 w-2 rounded-full bg-emerald-400"></span>
-          <h2 class="text-sm font-semibold text-white">Institutional Confluence Radar</h2>
-          <span id="conf-symbol" class="text-[10px] font-mono px-2 py-0.5 rounded bg-zinc-800 text-zinc-300">BTCUSDT</span>
-        </div>
-        <div class="flex items-center gap-2">
-          <span class="text-[11px] font-mono text-zinc-400">SNIPER SCORE</span>
-          <span id="conf-score" class="text-sm font-bold font-mono px-2.5 py-0.5 rounded-lg bg-zinc-800 text-zinc-200 border border-zinc-700/70">0 / 100</span>
-        </div>
-      </div>
-      <div class="grid grid-cols-3 gap-2.5">
-        <div class="rounded-xl bg-zinc-900/70 border border-zinc-800/80 p-2.5">
-          <p class="text-[10px] font-mono uppercase text-zinc-400">4H Macro Bias</p>
-          <p id="conf-htf" class="mt-1 text-xs sm:text-sm font-bold font-mono text-zinc-200">UNAVAILABLE</p>
-        </div>
-        <div class="rounded-xl bg-zinc-900/70 border border-zinc-800/80 p-2.5">
-          <p class="text-[10px] font-mono uppercase text-zinc-400">VWAP Alignment</p>
-          <p id="conf-vwap" class="mt-1 text-xs sm:text-sm font-bold font-mono text-zinc-200">NEUTRAL</p>
-        </div>
-        <div class="rounded-xl bg-zinc-900/70 border border-zinc-800/80 p-2.5">
-          <p class="text-[10px] font-mono uppercase text-zinc-400">Volume Surge</p>
-          <p id="conf-vol" class="mt-1 text-xs sm:text-sm font-bold font-mono text-zinc-200">1.00x</p>
-        </div>
-      </div>
-    </section>
-
-    <!-- Strategy Control Board -->
-    <section class="mt-4">
-      <div class="flex items-center justify-between mb-2.5 px-0.5">
-        <h2 class="text-sm font-semibold text-white">Strategy Control Board</h2>
-        <span class="text-xs text-zinc-400">Instant DB-persisted toggles</span>
-      </div>
-      <div id="strategy-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        <!-- Populated by JS -->
-      </div>
-    </section>
-
-    <!-- Open Positions & Closed Trade History -->
-    <section class="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
-      <!-- Open Positions -->
-      <div class="glass-card rounded-2xl p-4">
-        <div class="flex items-center justify-between mb-3">
-          <h2 class="text-sm font-semibold text-white">Open Positions</h2>
-          <span id="open-count" class="text-xs font-mono px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">0 OPEN</span>
-        </div>
-        <div id="open-positions-list" class="space-y-2.5">
-          <!-- Populated by JS -->
-        </div>
-      </div>
-
-      <!-- Recent Closed Trades -->
-      <div class="glass-card rounded-2xl p-4">
-        <div class="flex items-center justify-between mb-3">
-          <h2 class="text-sm font-semibold text-white">Trade History Feed</h2>
-          <span id="closed-count" class="text-xs font-mono px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-300">0 CLOSED</span>
-        </div>
-        <div id="closed-trades-list" class="space-y-2.5 max-h-[26rem] overflow-y-auto no-scrollbar">
-          <!-- Populated by JS -->
-        </div>
-      </div>
-    </section>
-
-    <!-- Collapsible Live System Log Drawer -->
-    <section class="mt-4 glass-card rounded-2xl overflow-hidden">
-      <button onclick="toggleLogDrawer()" class="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-zinc-800/40 transition">
-        <div class="flex items-center gap-2">
-          <span class="h-2 w-2 rounded-full bg-emerald-400"></span>
-          <span class="text-sm font-semibold text-white">Live System Logs</span>
-          <span id="log-count" class="text-[11px] font-mono text-zinc-400">(0)</span>
-        </div>
-        <span id="log-chevron" class="text-xs font-mono text-zinc-400">EXPAND ▼</span>
-      </button>
-      <div id="log-drawer" class="hidden border-t border-zinc-800/80 bg-zinc-950/70 px-4 py-3 max-h-64 overflow-y-auto font-mono text-xs space-y-1.5">
-        <!-- Populated by JS -->
-      </div>
-    </section>
-    </div>
-
-    <!-- BOT SUMMARIZER VIEW -->
-    <div id="view-summarizer" class="hidden space-y-4 mt-4">
-      <!-- Big Bot Health Grade & Accuracy Card -->
-      <section class="glass-card rounded-2xl p-4 sm:p-5">
-        <div class="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p class="text-[11px] font-mono uppercase tracking-wider text-zinc-400">Bot Health Grade &amp; Edge Verification</p>
-            <div class="mt-1.5 flex items-baseline gap-3">
-              <span id="sum-grade" class="text-3xl sm:text-4xl font-extrabold font-mono text-amber-400">CALIBRATING</span>
-              <span id="sum-trades-badge" class="text-xs font-mono px-2.5 py-1 rounded-full bg-zinc-800 text-zinc-300 border border-zinc-700/70">0 closed trades</span>
+            <div id="live-candlestick-chart" class="h-72 sm:h-80 w-full rounded-xl overflow-hidden border border-white/[0.08] bg-[#07090d]"></div>
+            <div class="mt-2 flex flex-wrap items-center justify-between gap-2 text-[10px] font-mono text-zinc-500">
+              <div class="flex items-center gap-3">
+                <span class="inline-flex items-center gap-1"><span class="h-1.5 w-3 rounded-sm bg-sky-400"></span>ENTRY</span>
+                <span class="inline-flex items-center gap-1"><span class="h-1.5 w-3 rounded-sm bg-rose-500"></span>STOP LOSS</span>
+                <span class="inline-flex items-center gap-1"><span class="h-1.5 w-3 rounded-sm bg-emerald-500"></span>TAKE PROFIT</span>
+              </div>
+              <span>TradingView Lightweight Charts</span>
             </div>
           </div>
-          <div class="text-left sm:text-right">
-            <p class="text-[11px] font-mono uppercase text-zinc-400">Net Realized PnL</p>
-            <p id="sum-net-pnl" class="mt-0.5 text-2xl font-bold font-mono text-emerald-400">+$0.00</p>
-          </div>
-        </div>
 
-        <!-- Win Rate % vs Break-Even Needed % Visual Bar -->
-        <div class="mt-4 pt-4 border-t border-zinc-800/80">
-          <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
-            <span class="text-zinc-300">Accuracy (Win Rate): <strong id="sum-win-rate" class="text-white">0.0%</strong></span>
-            <span class="text-zinc-400">Break-Even Needed: <strong id="sum-breakeven" class="text-zinc-200">0.0%</strong></span>
-            <span id="sum-edge-pill" class="px-2 py-0.5 rounded-md text-[11px] font-bold bg-zinc-800 text-zinc-300">EDGE +0.0%</span>
-          </div>
-          <div class="relative mt-2.5 h-3 w-full rounded-full bg-zinc-800 overflow-hidden">
-            <div id="sum-wr-bar" class="h-full rounded-full bg-emerald-500 transition-all duration-300" style="width: 0%;"></div>
-            <div id="sum-be-marker" class="absolute top-0 bottom-0 w-0.5 bg-amber-300 shadow-[0_0_6px_rgba(252,211,77,0.9)]" style="left: 50%;" title="Break-Even Target"></div>
-          </div>
-          <div class="mt-1.5 flex items-center justify-between text-[10px] font-mono text-zinc-500">
-            <span>0%</span>
-            <span class="text-amber-300/90">▲ Amber line = Break-Even Win Rate Needed</span>
-            <span>100%</span>
-          </div>
-        </div>
-      </section>
+          <!-- Right Column: Equity Curve + Confluence Radar (4 cols on desktop) -->
+          <div class="lg:col-span-4 flex flex-col gap-3.5 sm:gap-4 min-w-0">
+            <!-- Live Equity Curve -->
+            <div class="glass-card rounded-2xl p-4 flex-1 flex flex-col">
+              <div class="flex items-center justify-between gap-2 mb-3">
+                <div class="min-w-0">
+                  <h2 class="text-sm font-semibold text-white truncate">Live Equity Curve</h2>
+                  <p class="text-[11px] text-zinc-400 truncate">Multi-market trajectory</p>
+                </div>
+                <span class="text-[10px] font-mono px-2 py-0.5 rounded-md bg-white/[0.06] text-zinc-300 border border-white/[0.08] shrink-0">3s POLL</span>
+              </div>
+              <div class="h-48 sm:h-52 w-full flex-1">
+                <canvas id="equityChart"></canvas>
+              </div>
+            </div>
 
-      <!-- Edge & Math Strip -->
-      <section class="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <div class="glass-card rounded-2xl p-3.5">
-          <p class="text-[11px] font-medium uppercase tracking-wider text-zinc-400">Profit Factor</p>
-          <p id="sum-pf" class="mt-1 text-xl font-bold font-mono text-white">0.00</p>
-          <p class="mt-1 text-[11px] text-zinc-500">&gt; 1.50 = strong edge</p>
-        </div>
-        <div class="glass-card rounded-2xl p-3.5">
-          <p class="text-[11px] font-medium uppercase tracking-wider text-zinc-400">Expectancy / Trade</p>
-          <p id="sum-expectancy" class="mt-1 text-xl font-bold font-mono text-emerald-400">+$0.00</p>
-          <p class="mt-1 text-[11px] text-zinc-500">Avg expected $ per trade</p>
-        </div>
-        <div class="glass-card rounded-2xl p-3.5">
-          <p class="text-[11px] font-medium uppercase tracking-wider text-zinc-400">Avg Win vs Loss</p>
-          <p id="sum-win-loss" class="mt-1 text-base sm:text-lg font-bold font-mono text-white">$0 / $0</p>
-          <p id="sum-rr" class="mt-1 text-[11px] font-mono text-zinc-400">Avg R:R 0.00x</p>
-        </div>
-        <div class="glass-card rounded-2xl p-3.5">
-          <p class="text-[11px] font-medium uppercase tracking-wider text-zinc-400">Max Drawdown</p>
-          <p id="sum-dd" class="mt-1 text-xl font-bold font-mono text-rose-300">0.00%</p>
-          <p class="mt-1 text-[11px] text-zinc-500">Peak-to-trough dip</p>
-        </div>
-      </section>
-
-      <!-- Plain-English "Deep Detail Simplified" Brief Box -->
-      <section class="glass-card rounded-2xl p-4 sm:p-5 border border-emerald-500/25">
-        <div class="flex items-center justify-between gap-2 mb-2.5">
-          <div class="flex items-center gap-2">
-            <span class="h-2.5 w-2.5 rounded-full bg-emerald-400"></span>
-            <h2 class="text-sm font-semibold text-white">Deep Detail Simplified (Plain-English Brief)</h2>
+            <!-- Institutional Confluence Radar -->
+            <div class="glass-card rounded-2xl p-4">
+              <div class="flex items-center justify-between gap-2 mb-3">
+                <div class="flex items-center gap-2 min-w-0">
+                  <span class="h-2 w-2 rounded-full bg-emerald-400 shrink-0"></span>
+                  <h2 class="text-sm font-semibold text-white truncate">Confluence Radar</h2>
+                  <span id="conf-symbol" class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/[0.06] text-zinc-300 shrink-0">BTCUSDT</span>
+                </div>
+                <span id="conf-score" class="text-xs font-bold font-mono px-2 py-0.5 rounded-lg bg-white/[0.06] text-zinc-200 border border-white/[0.09] whitespace-nowrap tabular-nums shrink-0">0 / 100</span>
+              </div>
+              <div class="grid grid-cols-3 gap-2">
+                <div class="glass-subcard rounded-xl p-2.5">
+                  <p class="text-[10px] font-mono uppercase text-zinc-400 truncate">4H Bias</p>
+                  <p id="conf-htf" class="mt-1 text-xs font-bold font-mono text-zinc-200 truncate">UNAVAILABLE</p>
+                </div>
+                <div class="glass-subcard rounded-xl p-2.5">
+                  <p class="text-[10px] font-mono uppercase text-zinc-400 truncate">VWAP</p>
+                  <p id="conf-vwap" class="mt-1 text-xs font-bold font-mono text-zinc-200 truncate">NEUTRAL</p>
+                </div>
+                <div class="glass-subcard rounded-xl p-2.5">
+                  <p class="text-[10px] font-mono uppercase text-zinc-400 truncate">Vol Surge</p>
+                  <p id="conf-vol" class="mt-1 text-xs font-bold font-mono text-zinc-200 tabular-nums">1.00x</p>
+                </div>
+              </div>
+            </div>
           </div>
-          <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">10-SEC READ</span>
-        </div>
-        <p id="sum-headline" class="text-sm sm:text-base font-semibold text-zinc-100 leading-snug">
-          Loading plain-English performance summary...
-        </p>
-        <ul id="sum-bullets" class="mt-3 space-y-2 text-xs sm:text-sm text-zinc-300 leading-relaxed">
-          <!-- Populated by JS -->
-        </ul>
-      </section>
+        </section>
 
-      <!-- Strategy Leaderboard & Risk Shield Audit Card -->
-      <section class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <!-- Strategy Leaderboard -->
-        <div class="glass-card rounded-2xl p-4">
-          <div class="flex items-center justify-between mb-3">
-            <h2 class="text-sm font-semibold text-white">Strategy Leaderboard</h2>
-            <span class="text-[11px] font-mono text-zinc-400">RANKED BY PNL &amp; ACCURACY</span>
+        <!-- Strategy Control Board -->
+        <section>
+          <div class="flex items-center justify-between gap-2 mb-2.5 px-0.5">
+            <h2 class="text-sm font-semibold text-white">Strategy Control Board</h2>
+            <span class="text-xs text-zinc-400">Instant DB-persisted toggles</span>
           </div>
-          <div id="sum-strategy-list" class="space-y-2.5">
+          <div id="strategy-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
             <!-- Populated by JS -->
           </div>
-        </div>
+        </section>
 
-        <!-- Risk Shield Audit Card -->
-        <div class="glass-card rounded-2xl p-4 flex flex-col justify-between">
-          <div>
-            <div class="flex items-center justify-between mb-3">
-              <h2 class="text-sm font-semibold text-white">Risk Shield &amp; Guard Audit</h2>
-              <span id="sum-shield-badge" class="text-[11px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">ARMED</span>
+        <!-- Open Positions & Closed Trade History (12-Column Grid) -->
+        <section class="grid grid-cols-1 lg:grid-cols-12 gap-3.5 sm:gap-4">
+          <div class="glass-card rounded-2xl p-4 lg:col-span-6">
+            <div class="flex items-center justify-between gap-2 mb-3">
+              <h2 class="text-sm font-semibold text-white">Open Positions</h2>
+              <span id="open-count" class="text-[11px] font-mono px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 tabular-nums">0 OPEN</span>
             </div>
-            <div class="grid grid-cols-2 gap-2.5">
-              <div class="rounded-xl bg-zinc-900/75 border border-zinc-800/90 p-3">
-                <p class="text-[10px] font-mono uppercase text-zinc-400">Daily Loss Used</p>
-                <p id="sum-shield-dd" class="mt-1 text-lg font-bold font-mono text-white">0.00% / 3.00%</p>
-              </div>
-              <div class="rounded-xl bg-zinc-900/75 border border-zinc-800/90 p-3">
-                <p class="text-[10px] font-mono uppercase text-zinc-400">Total Blocked Hazards</p>
-                <p id="sum-shield-skips" class="mt-1 text-lg font-bold font-mono text-emerald-400">0</p>
-              </div>
-              <div class="rounded-xl bg-zinc-900/75 border border-zinc-800/90 p-3">
-                <p class="text-[10px] font-mono uppercase text-zinc-400">Weak Setups Blocked</p>
-                <p id="sum-shield-conf" class="mt-1 text-base font-bold font-mono text-zinc-200">0</p>
-                <p class="text-[10px] text-zinc-500">ConfluenceFilter</p>
-              </div>
-              <div class="rounded-xl bg-zinc-900/75 border border-zinc-800/90 p-3">
-                <p class="text-[10px] font-mono uppercase text-zinc-400">Session/News Pauses</p>
-                <p id="sum-shield-sess" class="mt-1 text-base font-bold font-mono text-zinc-200">0</p>
-                <p class="text-[10px] text-zinc-500">SessionGuard</p>
-              </div>
-            </div>
-          </div>
-
-          <div class="mt-3 pt-3 border-t border-zinc-800/80">
-            <p class="text-[11px] font-mono uppercase text-zinc-400 mb-2">Regime Performance Breakdown</p>
-            <div id="sum-regime-list" class="grid grid-cols-2 gap-2 text-xs font-mono">
+            <div id="open-positions-list" class="space-y-2.5">
               <!-- Populated by JS -->
             </div>
           </div>
-        </div>
-      </section>
-    </div>
 
-    <!-- STRATEGY LAB (BACKTESTER) VIEW -->
-    <div id="view-lab" class="hidden space-y-4 mt-4">
-      <!-- Backtest Configuration Form -->
-      <section class="glass-card rounded-2xl p-4 sm:p-5">
-        <div class="flex flex-wrap items-center justify-between gap-2 mb-3.5">
-          <div>
-            <h2 class="text-sm sm:text-base font-bold text-white">Strategy Lab · Zero-Lookahead Backtester</h2>
-            <p class="text-xs text-zinc-400">Bar-by-bar historical simulation with slippage, fees, and pessimistic intrabar tie-breaking</p>
+          <div class="glass-card rounded-2xl p-4 lg:col-span-6">
+            <div class="flex items-center justify-between gap-2 mb-3">
+              <h2 class="text-sm font-semibold text-white">Trade History Feed</h2>
+              <span id="closed-count" class="text-[11px] font-mono px-2.5 py-0.5 rounded-full bg-white/[0.06] text-zinc-300 border border-white/[0.08] tabular-nums">0 CLOSED</span>
+            </div>
+            <div id="closed-trades-list" class="space-y-2.5 max-h-[26rem] overflow-y-auto no-scrollbar">
+              <!-- Populated by JS -->
+            </div>
           </div>
-          <span id="lab-source-pill" class="text-[10px] font-mono font-semibold px-2.5 py-1 rounded-full bg-zinc-800 text-zinc-300 border border-zinc-700/80">READY</span>
-        </div>
+        </section>
 
-        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <div>
-            <label for="lab-symbol" class="block text-[11px] font-mono uppercase text-zinc-400 mb-1">Symbol</label>
-            <select id="lab-symbol" class="w-full rounded-xl bg-zinc-900 border border-zinc-700/80 px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-emerald-500">
-              <option value="BTCUSDT">BTCUSDT</option>
-              <option value="ETHUSDT">ETHUSDT</option>
-              <option value="SOLUSDT">SOLUSDT</option>
-              <option value="R_100">R_100</option>
-              <option value="frxEURUSD">frxEURUSD</option>
-            </select>
-          </div>
-          <div>
-            <label for="lab-interval" class="block text-[11px] font-mono uppercase text-zinc-400 mb-1">Timeframe</label>
-            <select id="lab-interval" class="w-full rounded-xl bg-zinc-900 border border-zinc-700/80 px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-emerald-500">
-              <option value="15m">15m</option>
-              <option value="1h" selected>1h</option>
-              <option value="4h">4h</option>
-            </select>
-          </div>
-          <div>
-            <label for="lab-days" class="block text-[11px] font-mono uppercase text-zinc-400 mb-1">Lookback</label>
-            <select id="lab-days" class="w-full rounded-xl bg-zinc-900 border border-zinc-700/80 px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-emerald-500">
-              <option value="30">30 Days</option>
-              <option value="60" selected>60 Days</option>
-              <option value="90">90 Days</option>
-            </select>
-          </div>
-          <div>
-            <label for="lab-balance" class="block text-[11px] font-mono uppercase text-zinc-400 mb-1">Starting Balance ($)</label>
-            <input id="lab-balance" type="number" min="100" max="1000000" step="500" value="10000" class="w-full rounded-xl bg-zinc-900 border border-zinc-700/80 px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-emerald-500" />
-          </div>
-        </div>
-
-        <div class="mt-3.5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-3 border-t border-zinc-800/80">
-          <div class="flex flex-wrap items-center gap-4 text-xs text-zinc-300">
-            <label class="inline-flex items-center gap-2 cursor-pointer">
-              <input id="lab-partial-tp" type="checkbox" checked class="h-4 w-4 rounded accent-emerald-500" />
-              <span>50% Partial Scale-Out at +1.0R</span>
-            </label>
-            <label class="inline-flex items-center gap-2 cursor-pointer">
-              <input id="lab-confluence" type="checkbox" checked class="h-4 w-4 rounded accent-emerald-500" />
-              <span>MTF/VWAP Confluence Gate</span>
-            </label>
-          </div>
-
-          <button id="btn-run-backtest" onclick="runBacktest()" class="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold bg-emerald-500 text-zinc-950 hover:bg-emerald-400 active:scale-95 transition shadow-lg shadow-emerald-500/20 disabled:opacity-50">
-            <svg id="lab-spinner" class="hidden animate-spin h-4 w-4 text-zinc-950" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
-            </svg>
-            <span id="lab-btn-text">Run Backtest</span>
+        <!-- Collapsible Live System Log Drawer (2-Line Mobile-Safe Structured Rows) -->
+        <section class="glass-card rounded-2xl overflow-hidden">
+          <button type="button" onclick="toggleLogDrawer()" class="w-full px-4 py-3 flex items-center justify-between gap-2 text-left hover:bg-white/[0.03] transition">
+            <div class="flex items-center gap-2 min-w-0">
+              <span class="h-2 w-2 rounded-full bg-emerald-400 shrink-0"></span>
+              <span class="text-sm font-semibold text-white truncate">Live System Logs</span>
+              <span id="log-count" class="text-[11px] font-mono text-zinc-400 tabular-nums shrink-0">(0)</span>
+            </div>
+            <span id="log-chevron" class="text-xs font-mono text-zinc-400 shrink-0">EXPAND ▼</span>
           </button>
-        </div>
-        <p id="lab-error" class="hidden mt-2 text-xs text-rose-400 font-mono"></p>
-      </section>
+          <div id="log-drawer" class="hidden border-t border-white/[0.07] bg-[#06080c]/90 px-3 sm:px-4 py-3 max-h-80 overflow-y-auto font-mono text-xs space-y-2">
+            <!-- Populated by JS -->
+          </div>
+        </section>
+      </div>
 
-      <!-- Results Dashboard -->
-      <div id="lab-results" class="hidden space-y-4">
-        <!-- KPI Bento Grid -->
-        <section class="grid grid-cols-2 lg:grid-cols-6 gap-3">
-          <div class="glass-card rounded-2xl p-3.5 col-span-2 lg:col-span-1">
-            <p class="text-[11px] font-medium uppercase tracking-wider text-zinc-400">Net Return</p>
-            <p id="lab-net-return" class="mt-1 text-xl font-bold font-mono text-emerald-400">+0.00%</p>
-            <p id="lab-bnh" class="mt-1 text-[11px] font-mono text-zinc-400">vs B&amp;H +0.00%</p>
+      <!-- ================================================================ -->
+      <!-- VIEW 2: BOT SUMMARIZER                                           -->
+      <!-- ================================================================ -->
+      <div id="view-summarizer" class="hidden space-y-4">
+        <!-- Big Bot Health Grade & Accuracy Card -->
+        <section class="glass-card rounded-2xl p-4 sm:p-5">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div class="min-w-0">
+              <p class="text-[10px] font-mono uppercase tracking-wider text-zinc-400">Bot Health Grade &amp; Edge Verification</p>
+              <div class="mt-1.5 flex flex-wrap items-baseline gap-2.5">
+                <span id="sum-grade" class="text-3xl sm:text-4xl font-extrabold font-mono text-amber-400">CALIBRATING</span>
+                <span id="sum-trades-badge" class="text-xs font-mono px-2.5 py-1 rounded-full bg-white/[0.06] text-zinc-300 border border-white/[0.09] tabular-nums">0 closed trades</span>
+              </div>
+            </div>
+            <div class="text-left sm:text-right">
+              <p class="text-[10px] font-mono uppercase text-zinc-400">Net Realized PnL</p>
+              <p id="sum-net-pnl" class="mt-0.5 kpi-value-lg font-bold font-mono text-emerald-400">+$0.00</p>
+            </div>
           </div>
-          <div class="glass-card rounded-2xl p-3.5">
-            <p class="text-[11px] font-medium uppercase tracking-wider text-zinc-400">Win Rate</p>
-            <p id="lab-win-rate" class="mt-1 text-xl font-bold font-mono text-white">0.0%</p>
-            <p id="lab-trade-counts" class="mt-1 text-[11px] font-mono text-zinc-400">0W / 0L</p>
-          </div>
-          <div class="glass-card rounded-2xl p-3.5">
-            <p class="text-[11px] font-medium uppercase tracking-wider text-zinc-400">Profit Factor</p>
-            <p id="lab-pf" class="mt-1 text-xl font-bold font-mono text-white">0.00</p>
-            <p id="lab-be-wr" class="mt-1 text-[11px] font-mono text-zinc-400">BE WR 0.0%</p>
-          </div>
-          <div class="glass-card rounded-2xl p-3.5">
-            <p class="text-[11px] font-medium uppercase tracking-wider text-zinc-400">Expectancy</p>
-            <p id="lab-expectancy" class="mt-1 text-xl font-bold font-mono text-emerald-400">+$0.00</p>
-            <p class="mt-1 text-[11px] text-zinc-500">Per trade avg</p>
-          </div>
-          <div class="glass-card rounded-2xl p-3.5">
-            <p class="text-[11px] font-medium uppercase tracking-wider text-zinc-400">Max Drawdown</p>
-            <p id="lab-max-dd" class="mt-1 text-xl font-bold font-mono text-rose-300">0.00%</p>
-            <p id="lab-cb-trips" class="mt-1 text-[11px] font-mono text-zinc-500">0 CB trips</p>
-          </div>
-          <div class="glass-card rounded-2xl p-3.5">
-            <p class="text-[11px] font-medium uppercase tracking-wider text-zinc-400">Partial TP Hits</p>
-            <p id="lab-partial-hits" class="mt-1 text-xl font-bold font-mono text-amber-300">0</p>
-            <p id="lab-candles" class="mt-1 text-[11px] font-mono text-zinc-500">0 bars tested</p>
+
+          <!-- Win Rate % vs Break-Even Needed % Visual Bar -->
+          <div class="mt-4 pt-4 border-t border-white/[0.08]">
+            <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono tabular-nums">
+              <span class="text-zinc-300">Accuracy (Win Rate): <strong id="sum-win-rate" class="text-white">0.0%</strong></span>
+              <span class="text-zinc-400">Break-Even Needed: <strong id="sum-breakeven" class="text-zinc-200">0.0%</strong></span>
+              <span id="sum-edge-pill" class="px-2 py-0.5 rounded-md text-[11px] font-bold bg-white/[0.06] text-zinc-300">EDGE +0.0%</span>
+            </div>
+            <div class="relative mt-2.5 h-3 w-full rounded-full bg-white/[0.08] overflow-hidden">
+              <div id="sum-wr-bar" class="h-full rounded-full bg-emerald-500 transition-all duration-300" style="width: 0%;"></div>
+              <div id="sum-be-marker" class="absolute top-0 bottom-0 w-0.5 bg-amber-300 shadow-[0_0_6px_rgba(252,211,77,0.9)]" style="left: 50%;" title="Break-Even Target"></div>
+            </div>
+            <div class="mt-1.5 flex items-center justify-between text-[10px] font-mono text-zinc-500">
+              <span>0%</span>
+              <span class="text-amber-300/90 text-center">▲ Amber line = Break-Even Target</span>
+              <span>100%</span>
+            </div>
           </div>
         </section>
 
-        <!-- Equity Curve vs Buy & Hold Chart -->
-        <section class="glass-card rounded-2xl p-4">
-          <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
-            <div>
-              <h3 class="text-sm font-semibold text-white">Simulated Equity Curve vs. Buy &amp; Hold</h3>
-              <p id="lab-equity-subtitle" class="text-xs text-zinc-400">Starting $10,000.00 → Ending $10,000.00</p>
-            </div>
-            <div class="flex items-center gap-3 text-[11px] font-mono">
-              <span class="inline-flex items-center gap-1.5 text-emerald-400"><span class="h-2 w-2 rounded-full bg-emerald-400"></span>Strategy</span>
-              <span class="inline-flex items-center gap-1.5 text-zinc-400"><span class="h-2 w-2 rounded-full bg-zinc-500"></span>Buy &amp; Hold</span>
-            </div>
+        <!-- Edge & Math Strip (12-Column Grid) -->
+        <section class="grid grid-cols-2 lg:grid-cols-12 gap-3.5 sm:gap-4">
+          <div class="glass-card rounded-2xl p-3.5 sm:p-4 lg:col-span-3">
+            <p class="text-[10px] font-mono font-semibold uppercase tracking-wider text-zinc-400">Profit Factor</p>
+            <p id="sum-pf" class="mt-1.5 kpi-value font-bold font-mono text-white">0.00</p>
+            <p class="mt-1 text-[11px] text-zinc-500">&gt; 1.50 = strong edge</p>
           </div>
-          <div class="h-60 sm:h-72 w-full">
-            <canvas id="labEquityChart"></canvas>
+          <div class="glass-card rounded-2xl p-3.5 sm:p-4 lg:col-span-3">
+            <p class="text-[10px] font-mono font-semibold uppercase tracking-wider text-zinc-400">Expectancy / Trade</p>
+            <p id="sum-expectancy" class="mt-1.5 kpi-value font-bold font-mono text-emerald-400">+$0.00</p>
+            <p class="mt-1 text-[11px] text-zinc-500">Avg expected $ per trade</p>
+          </div>
+          <div class="glass-card rounded-2xl p-3.5 sm:p-4 lg:col-span-3">
+            <p class="text-[10px] font-mono font-semibold uppercase tracking-wider text-zinc-400">Avg Win vs Loss</p>
+            <p id="sum-win-loss" class="mt-1.5 text-sm sm:text-base font-bold font-mono text-white tabular-nums flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 leading-snug">
+              <span class="text-emerald-300 whitespace-nowrap">$0.00</span>
+              <span class="text-[11px] font-normal text-zinc-500">vs</span>
+              <span class="text-rose-300 whitespace-nowrap">$0.00</span>
+            </p>
+            <p id="sum-rr" class="mt-1 text-[11px] font-mono text-zinc-400 tabular-nums">Avg R:R 0.00x</p>
+          </div>
+          <div class="glass-card rounded-2xl p-3.5 sm:p-4 lg:col-span-3">
+            <p class="text-[10px] font-mono font-semibold uppercase tracking-wider text-zinc-400">Max Drawdown</p>
+            <p id="sum-dd" class="mt-1.5 kpi-value font-bold font-mono text-rose-300">0.00%</p>
+            <p class="mt-1 text-[11px] text-zinc-500">Peak-to-trough dip</p>
           </div>
         </section>
 
-        <!-- Per-Strategy Breakdown & Simulated Trade Feed -->
-        <section class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <div class="glass-card rounded-2xl p-4">
-            <div class="flex items-center justify-between mb-3">
-              <h3 class="text-sm font-semibold text-white">Per-Strategy Performance</h3>
-              <span class="text-[11px] font-mono text-zinc-400">BREAKDOWN</span>
+        <!-- Plain-English "Deep Detail Simplified" Brief Box -->
+        <section class="glass-card rounded-2xl p-4 sm:p-5 border border-emerald-500/25">
+          <div class="flex flex-nowrap items-center justify-between gap-2.5 mb-2.5">
+            <div class="flex items-center gap-2 min-w-0">
+              <span class="h-2.5 w-2.5 rounded-full bg-emerald-400 shrink-0"></span>
+              <h2 class="text-sm font-semibold text-white truncate">
+                <span class="sm:hidden">Plain-English Brief</span>
+                <span class="hidden sm:inline">Deep Detail Simplified (Plain-English Brief)</span>
+              </h2>
             </div>
-            <div class="overflow-x-auto">
-              <table class="w-full text-left text-xs font-mono">
-                <thead class="text-[10px] uppercase text-zinc-500 border-b border-zinc-800">
-                  <tr>
-                    <th class="py-2 pr-2">Strategy</th>
-                    <th class="py-2 px-2 text-right">Trades</th>
-                    <th class="py-2 px-2 text-right">Win Rate</th>
-                    <th class="py-2 pl-2 text-right">Net PnL</th>
-                  </tr>
-                </thead>
-                <tbody id="lab-strategy-table" class="divide-y divide-zinc-800/70">
-                  <!-- Populated by JS -->
-                </tbody>
-              </table>
-            </div>
+            <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 shrink-0 whitespace-nowrap">10-SEC READ</span>
           </div>
+          <p id="sum-headline" class="text-sm sm:text-base font-semibold text-zinc-100 leading-snug">
+            Loading plain-English performance summary...
+          </p>
+          <ul id="sum-bullets" class="mt-3 space-y-2 text-xs sm:text-sm text-zinc-300 leading-relaxed">
+            <!-- Populated by JS -->
+          </ul>
+        </section>
 
-          <div class="glass-card rounded-2xl p-4">
-            <div class="flex items-center justify-between mb-3">
-              <h3 class="text-sm font-semibold text-white">Simulated Trade Feed</h3>
-              <span id="lab-trades-pill" class="text-[11px] font-mono px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-300">LAST 50</span>
+        <!-- Strategy Leaderboard & Risk Shield Audit Card (12-Column Grid) -->
+        <section class="grid grid-cols-1 lg:grid-cols-12 gap-3.5 sm:gap-4">
+          <div class="glass-card rounded-2xl p-4 lg:col-span-6">
+            <div class="flex items-center justify-between gap-2 mb-3">
+              <h2 class="text-sm font-semibold text-white">Strategy Leaderboard</h2>
+              <span class="text-[10px] font-mono text-zinc-400 whitespace-nowrap">BY PNL &amp; ACCURACY</span>
             </div>
-            <div id="lab-trades-list" class="space-y-2 max-h-80 overflow-y-auto no-scrollbar">
+            <div id="sum-strategy-list" class="space-y-2.5">
               <!-- Populated by JS -->
             </div>
           </div>
+
+          <div class="glass-card rounded-2xl p-4 lg:col-span-6 flex flex-col justify-between">
+            <div>
+              <div class="flex items-center justify-between gap-2 mb-3">
+                <h2 class="text-sm font-semibold text-white">Risk Shield &amp; Guard Audit</h2>
+                <span id="sum-shield-badge" class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 shrink-0">ARMED</span>
+              </div>
+              <div class="grid grid-cols-2 gap-2.5">
+                <div class="glass-subcard rounded-xl p-3">
+                  <p class="text-[10px] font-mono uppercase text-zinc-400">Daily Loss Used</p>
+                  <p id="sum-shield-dd" class="mt-1 font-mono tabular-nums flex flex-wrap items-baseline gap-x-1 gap-y-0.5">
+                    <span class="text-base sm:text-lg font-bold text-white whitespace-nowrap">0.00%</span>
+                    <span class="text-[11px] font-normal text-zinc-400 whitespace-nowrap">/ 3.00% max</span>
+                  </p>
+                </div>
+                <div class="glass-subcard rounded-xl p-3">
+                  <p class="text-[10px] font-mono uppercase text-zinc-400">Blocked Hazards</p>
+                  <p id="sum-shield-skips" class="mt-1 text-base sm:text-lg font-bold font-mono text-emerald-400 tabular-nums">0</p>
+                </div>
+                <div class="glass-subcard rounded-xl p-3">
+                  <p class="text-[10px] font-mono uppercase text-zinc-400">Weak Setups</p>
+                  <p id="sum-shield-conf" class="mt-1 text-base font-bold font-mono text-zinc-200 tabular-nums">0</p>
+                  <p class="text-[10px] text-zinc-500">ConfluenceFilter</p>
+                </div>
+                <div class="glass-subcard rounded-xl p-3">
+                  <p class="text-[10px] font-mono uppercase text-zinc-400">Session Pauses</p>
+                  <p id="sum-shield-sess" class="mt-1 text-base font-bold font-mono text-zinc-200 tabular-nums">0</p>
+                  <p class="text-[10px] text-zinc-500">SessionGuard</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="mt-3.5 pt-3 border-t border-white/[0.08]">
+              <p class="text-[10px] font-mono uppercase text-zinc-400 mb-2">Regime Performance Breakdown</p>
+              <div id="sum-regime-list" class="grid grid-cols-2 gap-2 text-xs font-mono">
+                <!-- Populated by JS -->
+              </div>
+            </div>
+          </div>
         </section>
+      </div>
+
+      <!-- ================================================================ -->
+      <!-- VIEW 3: STRATEGY LAB (BACKTESTER)                                -->
+      <!-- ================================================================ -->
+      <div id="view-lab" class="hidden space-y-4">
+        <section class="glass-card rounded-2xl p-4 sm:p-5">
+          <div class="flex flex-wrap items-center justify-between gap-2 mb-3.5">
+            <div class="min-w-0">
+              <h2 class="text-sm sm:text-base font-bold text-white">Strategy Lab · Zero-Lookahead Backtester</h2>
+              <p class="text-xs text-zinc-400">Bar-by-bar historical simulation with slippage, fees, and pessimistic intrabar tie-breaking</p>
+            </div>
+            <span id="lab-source-pill" class="text-[10px] font-mono font-semibold px-2.5 py-1 rounded-full bg-white/[0.06] text-zinc-300 border border-white/[0.09] shrink-0">READY</span>
+          </div>
+
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div>
+              <label for="lab-symbol" class="block text-[10px] font-mono uppercase text-zinc-400 mb-1">Symbol</label>
+              <select id="lab-symbol" class="w-full rounded-xl bg-[#0b0f17] border border-white/[0.1] px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-emerald-500">
+                <option value="BTCUSDT">BTCUSDT</option>
+                <option value="ETHUSDT">ETHUSDT</option>
+                <option value="SOLUSDT">SOLUSDT</option>
+                <option value="R_100">R_100</option>
+                <option value="frxEURUSD">frxEURUSD</option>
+              </select>
+            </div>
+            <div>
+              <label for="lab-interval" class="block text-[10px] font-mono uppercase text-zinc-400 mb-1">Timeframe</label>
+              <select id="lab-interval" class="w-full rounded-xl bg-[#0b0f17] border border-white/[0.1] px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-emerald-500">
+                <option value="15m">15m</option>
+                <option value="1h" selected>1h</option>
+                <option value="4h">4h</option>
+              </select>
+            </div>
+            <div>
+              <label for="lab-days" class="block text-[10px] font-mono uppercase text-zinc-400 mb-1">Lookback</label>
+              <select id="lab-days" class="w-full rounded-xl bg-[#0b0f17] border border-white/[0.1] px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-emerald-500">
+                <option value="30">30 Days</option>
+                <option value="60" selected>60 Days</option>
+                <option value="90">90 Days</option>
+              </select>
+            </div>
+            <div>
+              <label for="lab-balance" class="block text-[10px] font-mono uppercase text-zinc-400 mb-1">Starting Balance ($)</label>
+              <input id="lab-balance" type="number" min="100" max="1000000" step="500" value="10000" class="w-full rounded-xl bg-[#0b0f17] border border-white/[0.1] px-3 py-2 text-xs font-mono text-white tabular-nums focus:outline-none focus:border-emerald-500" />
+            </div>
+          </div>
+
+          <div class="mt-3.5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-3 border-t border-white/[0.08]">
+            <div class="flex flex-wrap items-center gap-4 text-xs text-zinc-300">
+              <label class="inline-flex items-center gap-2 cursor-pointer">
+                <input id="lab-partial-tp" type="checkbox" checked class="h-4 w-4 rounded accent-emerald-500" />
+                <span>50% Partial Scale-Out at +1.0R</span>
+              </label>
+              <label class="inline-flex items-center gap-2 cursor-pointer">
+                <input id="lab-confluence" type="checkbox" checked class="h-4 w-4 rounded accent-emerald-500" />
+                <span>MTF/VWAP Confluence Gate</span>
+              </label>
+            </div>
+
+            <button id="btn-run-backtest" type="button" onclick="runBacktest()" class="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold bg-emerald-500 text-zinc-950 hover:bg-emerald-400 active:scale-95 transition shadow-lg shadow-emerald-500/20 disabled:opacity-50">
+              <svg id="lab-spinner" class="hidden animate-spin h-4 w-4 text-zinc-950" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+              </svg>
+              <span id="lab-btn-text">Run Backtest</span>
+            </button>
+          </div>
+          <p id="lab-error" class="hidden mt-2 text-xs text-rose-400 font-mono"></p>
+        </section>
+
+        <!-- Results Dashboard -->
+        <div id="lab-results" class="hidden space-y-4">
+          <section class="grid grid-cols-2 lg:grid-cols-12 gap-3.5">
+            <div class="glass-card rounded-2xl p-3.5 col-span-2 lg:col-span-2">
+              <p class="text-[10px] font-mono uppercase tracking-wider text-zinc-400">Net Return</p>
+              <p id="lab-net-return" class="mt-1 kpi-value font-bold font-mono text-emerald-400">+0.00%</p>
+              <p id="lab-bnh" class="mt-1 text-[11px] font-mono text-zinc-400 tabular-nums">vs B&amp;H +0.00%</p>
+            </div>
+            <div class="glass-card rounded-2xl p-3.5 lg:col-span-2">
+              <p class="text-[10px] font-mono uppercase tracking-wider text-zinc-400">Win Rate</p>
+              <p id="lab-win-rate" class="mt-1 kpi-value font-bold font-mono text-white">0.0%</p>
+              <p id="lab-trade-counts" class="mt-1 text-[11px] font-mono text-zinc-400 tabular-nums">0W / 0L</p>
+            </div>
+            <div class="glass-card rounded-2xl p-3.5 lg:col-span-2">
+              <p class="text-[10px] font-mono uppercase tracking-wider text-zinc-400">Profit Factor</p>
+              <p id="lab-pf" class="mt-1 kpi-value font-bold font-mono text-white">0.00</p>
+              <p id="lab-be-wr" class="mt-1 text-[11px] font-mono text-zinc-400 tabular-nums">BE WR 0.0%</p>
+            </div>
+            <div class="glass-card rounded-2xl p-3.5 lg:col-span-2">
+              <p class="text-[10px] font-mono uppercase tracking-wider text-zinc-400">Expectancy</p>
+              <p id="lab-expectancy" class="mt-1 kpi-value font-bold font-mono text-emerald-400">+$0.00</p>
+              <p class="mt-1 text-[11px] text-zinc-500">Per trade avg</p>
+            </div>
+            <div class="glass-card rounded-2xl p-3.5 lg:col-span-2">
+              <p class="text-[10px] font-mono uppercase tracking-wider text-zinc-400">Max Drawdown</p>
+              <p id="lab-max-dd" class="mt-1 kpi-value font-bold font-mono text-rose-300">0.00%</p>
+              <p id="lab-cb-trips" class="mt-1 text-[11px] font-mono text-zinc-500 tabular-nums">0 CB trips</p>
+            </div>
+            <div class="glass-card rounded-2xl p-3.5 lg:col-span-2">
+              <p class="text-[10px] font-mono uppercase tracking-wider text-zinc-400">Partial TP Hits</p>
+              <p id="lab-partial-hits" class="mt-1 kpi-value font-bold font-mono text-amber-300">0</p>
+              <p id="lab-candles" class="mt-1 text-[11px] font-mono text-zinc-500 tabular-nums">0 bars tested</p>
+            </div>
+          </section>
+
+          <section class="glass-card rounded-2xl p-4">
+            <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+              <div>
+                <h3 class="text-sm font-semibold text-white">Simulated Equity Curve vs. Buy &amp; Hold</h3>
+                <p id="lab-equity-subtitle" class="text-xs text-zinc-400 tabular-nums">Starting $10,000.00 → Ending $10,000.00</p>
+              </div>
+              <div class="flex items-center gap-3 text-[11px] font-mono">
+                <span class="inline-flex items-center gap-1.5 text-emerald-400"><span class="h-2 w-2 rounded-full bg-emerald-400"></span>Strategy</span>
+                <span class="inline-flex items-center gap-1.5 text-zinc-400"><span class="h-2 w-2 rounded-full bg-zinc-500"></span>Buy &amp; Hold</span>
+              </div>
+            </div>
+            <div class="h-60 sm:h-72 w-full">
+              <canvas id="labEquityChart"></canvas>
+            </div>
+          </section>
+
+          <section class="grid grid-cols-1 lg:grid-cols-12 gap-3.5 sm:gap-4">
+            <div class="glass-card rounded-2xl p-4 lg:col-span-6">
+              <div class="flex items-center justify-between mb-3">
+                <h3 class="text-sm font-semibold text-white">Per-Strategy Performance</h3>
+                <span class="text-[10px] font-mono text-zinc-400">BREAKDOWN</span>
+              </div>
+              <div class="overflow-x-auto">
+                <table class="w-full text-left text-xs font-mono tabular-nums">
+                  <thead class="text-[10px] uppercase text-zinc-500 border-b border-white/[0.08]">
+                    <tr>
+                      <th class="py-2 pr-2">Strategy</th>
+                      <th class="py-2 px-2 text-right">Trades</th>
+                      <th class="py-2 px-2 text-right">Win Rate</th>
+                      <th class="py-2 pl-2 text-right">Net PnL</th>
+                    </tr>
+                  </thead>
+                  <tbody id="lab-strategy-table" class="divide-y divide-white/[0.06]">
+                    <!-- Populated by JS -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="glass-card rounded-2xl p-4 lg:col-span-6">
+              <div class="flex items-center justify-between mb-3">
+                <h3 class="text-sm font-semibold text-white">Simulated Trade Feed</h3>
+                <span id="lab-trades-pill" class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-white/[0.06] text-zinc-300">LAST 50</span>
+              </div>
+              <div id="lab-trades-list" class="space-y-2 max-h-80 overflow-y-auto no-scrollbar">
+                <!-- Populated by JS -->
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Notion-Style Ctrl+K / Cmd+K Quick Jump Palette -->
+  <div id="quick-jump-modal" onclick="if (event.target === this) closeQuickJump();" class="hidden fixed inset-0 z-50 flex items-start justify-center pt-[12vh] bg-black/75 px-4">
+    <div class="glass-card w-full max-w-md rounded-2xl overflow-hidden border border-white/[0.12] shadow-2xl">
+      <div class="flex items-center gap-2.5 px-4 py-3 border-b border-white/[0.08]">
+        <svg class="w-4 h-4 text-emerald-400 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-4.35-4.35m0 0A7.5 7.5 0 105.25 5.25a7.5 7.5 0 0011.4 11.4z" />
+        </svg>
+        <input
+          id="quick-jump-input"
+          type="text"
+          placeholder="Jump to tab, market, symbol, or action..."
+          oninput="renderQuickJumpList(this.value)"
+          class="w-full bg-transparent text-sm text-white placeholder:text-zinc-500 focus:outline-none"
+        />
+        <kbd class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/[0.06] text-zinc-400 border border-white/[0.08] shrink-0">ESC</kbd>
+      </div>
+      <div id="quick-jump-list" class="max-h-72 overflow-y-auto p-2 space-y-1">
+        <!-- Populated by JS -->
       </div>
     </div>
   </div>
 
   <!-- Kill Switch Confirmation Modal -->
-  <div id="kill-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
+  <div id="kill-modal" onclick="if (event.target === this) closeKillModal();" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4">
     <div class="glass-card rounded-2xl max-w-sm w-full p-5 border border-rose-500/40 shadow-2xl">
       <div class="flex items-center gap-2.5 text-rose-400">
         <svg class="w-6 h-6 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -620,10 +1021,10 @@
         This will immediately pause the trading loop, close all open paper positions at market price, and lock execution until manually resumed.
       </p>
       <div class="mt-4 flex items-center justify-end gap-2">
-        <button onclick="closeKillModal()" class="px-3.5 py-2 rounded-xl text-xs font-semibold bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition">
+        <button type="button" onclick="closeKillModal()" class="px-3.5 py-2 rounded-xl text-xs font-semibold bg-white/[0.07] text-zinc-300 hover:bg-white/[0.12] transition">
           Cancel
         </button>
-        <button onclick="confirmKillSwitch()" class="px-4 py-2 rounded-xl text-xs font-bold bg-rose-600 text-white hover:bg-rose-500 transition">
+        <button type="button" onclick="confirmKillSwitch()" class="px-4 py-2 rounded-xl text-xs font-bold bg-rose-600 text-white hover:bg-rose-500 transition">
           Confirm Kill Switch
         </button>
       </div>
@@ -631,10 +1032,10 @@
   </div>
 
   <!-- Obsidian Liquid-Glass Phone PIN Lock Overlay -->
-  <div id="pin-lock-overlay" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-[#09090b]/92 backdrop-blur-xl px-4">
-    <div class="glass-card w-full max-w-sm rounded-3xl p-6 shadow-2xl shadow-black/60 border border-zinc-700/60">
+  <div id="pin-lock-overlay" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-[#07090d]/95 px-4">
+    <div class="glass-card w-full max-w-sm rounded-3xl p-6 shadow-2xl shadow-black/70 border border-white/[0.12]">
       <div class="flex flex-col items-center text-center">
-        <div class="h-12 w-12 rounded-2xl bg-gradient-to-br from-emerald-400 to-emerald-600 flex items-center justify-center shadow-lg shadow-emerald-500/25 mb-3">
+        <div class="h-12 w-12 rounded-2xl bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center shadow-lg shadow-emerald-500/25 mb-3">
           <svg class="w-6 h-6 text-zinc-950" fill="none" stroke="currentColor" stroke-width="2.4" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
           </svg>
@@ -653,7 +1054,7 @@
             autocomplete="current-password"
             placeholder="Enter PIN"
             required
-            class="w-full px-4 py-3 rounded-2xl bg-zinc-950/90 border border-zinc-700/80 text-center text-lg font-mono tracking-[0.35em] text-white placeholder:tracking-normal placeholder:text-zinc-500 focus:outline-none focus:border-emerald-500/70 focus:ring-2 focus:ring-emerald-500/20"
+            class="w-full px-4 py-3 rounded-2xl bg-[#06080c] border border-white/[0.12] text-center text-lg font-mono tracking-[0.35em] text-white placeholder:tracking-normal placeholder:text-zinc-500 focus:outline-none focus:border-emerald-500/70 focus:ring-2 focus:ring-emerald-500/20"
           />
         </div>
         <div id="pin-error" class="hidden rounded-xl bg-rose-950/70 border border-rose-500/40 px-3 py-2 text-xs text-rose-200 text-center font-mono"></div>
@@ -687,6 +1088,18 @@
     let isAuthenticated = false;
     let pollTimerId = null;
     let lockoutTimerId = null;
+    let sidebarCollapsed = false;
+    let quickJumpIndex = 0;
+    let quickJumpFiltered = [];
+
+    function escapeHtml(str) {
+      return String(str ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
 
     function fmtUsd(val) {
       const num = Number(val || 0);
@@ -706,6 +1119,211 @@
       return num.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
     }
 
+    function formatRegimeName(raw) {
+      const map = {
+        HIGH_VOLATILITY: 'High Volatility',
+        RANGE_BOUND: 'Range Bound',
+        TRENDING_UP: 'Trending Up',
+        TRENDING_DOWN: 'Trending Down',
+        TRENDING: 'Trending',
+        DEFENSIVE: 'Defensive',
+        GENERAL: 'General',
+        UNKNOWN: 'Unknown',
+      };
+      const text = String(raw || 'UNKNOWN').trim();
+      if (text.includes('/')) {
+        return text
+          .split('/')
+          .map((part) => formatRegimeName(part.trim()))
+          .join(' · ');
+      }
+      if (map[text]) return map[text];
+      return text
+        .toLowerCase()
+        .split('_')
+        .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : ''))
+        .join(' ');
+    }
+
+    /* ==================== SIDEBAR & MOBILE DRAWER ==================== */
+    function applySidebarCollapseState() {
+      const sb = document.getElementById('workspace-sidebar');
+      if (sb) sb.setAttribute('data-collapsed', sidebarCollapsed ? 'true' : 'false');
+      document.body.setAttribute('data-sidebar-collapsed', sidebarCollapsed ? 'true' : 'false');
+      scheduleChartResize();
+    }
+
+    function initSidebarState() {
+      try {
+        sidebarCollapsed = localStorage.getItem('apex_sidebar_collapsed') === 'true';
+      } catch (e) {
+        sidebarCollapsed = false;
+      }
+      applySidebarCollapseState();
+    }
+
+    function toggleSidebarCollapse() {
+      sidebarCollapsed = !sidebarCollapsed;
+      try {
+        localStorage.setItem('apex_sidebar_collapsed', sidebarCollapsed ? 'true' : 'false');
+      } catch (e) {
+        // ignore storage quota / private mode
+      }
+      applySidebarCollapseState();
+    }
+
+    function openMobileDrawer() {
+      const sb = document.getElementById('workspace-sidebar');
+      const backdrop = document.getElementById('drawer-backdrop');
+      if (sb) sb.classList.add('drawer-open');
+      if (backdrop) backdrop.classList.remove('hidden');
+    }
+
+    function closeMobileDrawer() {
+      const sb = document.getElementById('workspace-sidebar');
+      const backdrop = document.getElementById('drawer-backdrop');
+      if (sb) sb.classList.remove('drawer-open');
+      if (backdrop) backdrop.classList.add('hidden');
+    }
+
+    function resizeLiveCandleChart() {
+      if (!liveCandleChart) return;
+      const container = document.getElementById('live-candlestick-chart');
+      if (!container) return;
+      const w = container.clientWidth;
+      const h = container.clientHeight;
+      if (w > 0 && h > 0 && typeof liveCandleChart.resize === 'function') {
+        liveCandleChart.resize(w, h);
+      }
+    }
+
+    function scheduleChartResize() {
+      requestAnimationFrame(resizeLiveCandleChart);
+      setTimeout(resizeLiveCandleChart, 220);
+    }
+
+    /* ==================== CTRL+K / CMD+K QUICK JUMP ==================== */
+    function getQuickJumpItems() {
+      const items = [
+        { label: 'Live Terminal', group: 'Workspace', hint: 'Tab', action: () => setView('terminal') },
+        { label: 'Bot Summarizer', group: 'Workspace', hint: 'Tab', action: () => setView('summarizer') },
+        { label: 'Strategy Lab', group: 'Workspace', hint: 'Tab', action: () => setView('lab') },
+        { label: 'All Markets', group: 'Market Scope', hint: 'ALL', action: () => setMarket('ALL') },
+        { label: 'Bybit (Crypto)', group: 'Market Scope', hint: 'BYBIT', action: () => setMarket('BYBIT') },
+        { label: 'Forex', group: 'Market Scope', hint: 'FOREX', action: () => setMarket('FOREX') },
+        { label: 'Chart: BTCUSDT', group: 'Live Chart', hint: 'Crypto', action: () => { setView('terminal'); setChartSymbol('BTCUSDT'); } },
+        { label: 'Chart: ETHUSDT', group: 'Live Chart', hint: 'Crypto', action: () => { setView('terminal'); setChartSymbol('ETHUSDT'); } },
+        { label: 'Chart: SOLUSDT', group: 'Live Chart', hint: 'Crypto', action: () => { setView('terminal'); setChartSymbol('SOLUSDT'); } },
+        { label: 'Chart: EUR_USD', group: 'Live Chart', hint: 'Forex', action: () => { setView('terminal'); setChartSymbol('EUR_USD'); } },
+        { label: 'Chart: XAU_USD', group: 'Live Chart', hint: 'Gold', action: () => { setView('terminal'); setChartSymbol('XAU_USD'); } },
+        { label: 'Emergency Kill Switch', group: 'Controls', hint: 'Danger', action: () => openKillModal() },
+      ];
+      if (authEnabled && isAuthenticated) {
+        items.push({ label: 'Lock Terminal', group: 'Security', hint: 'Sign Out', action: () => logoutDashboard() });
+      }
+      return items;
+    }
+
+    function openQuickJump() {
+      if (authEnabled && !isAuthenticated) return;
+      closeMobileDrawer();
+      const modal = document.getElementById('quick-jump-modal');
+      const input = document.getElementById('quick-jump-input');
+      if (!modal || !input) return;
+      modal.classList.remove('hidden');
+      input.value = '';
+      quickJumpIndex = 0;
+      renderQuickJumpList('');
+      setTimeout(() => input.focus(), 20);
+    }
+
+    function closeQuickJump() {
+      const modal = document.getElementById('quick-jump-modal');
+      if (modal) modal.classList.add('hidden');
+    }
+
+    function executeQuickJump(idx) {
+      const item = quickJumpFiltered[idx];
+      if (!item) return;
+      closeQuickJump();
+      item.action();
+    }
+
+    function renderQuickJumpList(query) {
+      const list = document.getElementById('quick-jump-list');
+      if (!list) return;
+      const q = String(query || '').trim().toLowerCase();
+      quickJumpFiltered = getQuickJumpItems().filter((item) =>
+        !q || item.label.toLowerCase().includes(q) || item.group.toLowerCase().includes(q) || item.hint.toLowerCase().includes(q)
+      );
+      if (quickJumpIndex >= quickJumpFiltered.length) quickJumpIndex = 0;
+
+      if (quickJumpFiltered.length === 0) {
+        list.innerHTML = '<div class="px-3 py-6 text-center text-xs text-zinc-500">No matching commands.</div>';
+        return;
+      }
+
+      list.innerHTML = quickJumpFiltered.map((item, idx) => {
+        const active = idx === quickJumpIndex;
+        const cls = active
+          ? 'bg-emerald-500/18 text-white border-emerald-500/35'
+          : 'bg-transparent text-zinc-300 border-transparent hover:bg-white/[0.05]';
+        return `
+          <button
+            type="button"
+            onclick="executeQuickJump(${idx})"
+            class="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl text-xs border transition ${cls}"
+          >
+            <span class="font-medium truncate">${escapeHtml(item.label)}</span>
+            <span class="text-[10px] font-mono text-zinc-400 shrink-0">${escapeHtml(item.group)} · ${escapeHtml(item.hint)}</span>
+          </button>
+        `;
+      }).join('');
+    }
+
+    document.addEventListener('keydown', (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        const modal = document.getElementById('quick-jump-modal');
+        if (modal && !modal.classList.contains('hidden')) {
+          closeQuickJump();
+        } else {
+          openQuickJump();
+        }
+        return;
+      }
+      const modal = document.getElementById('quick-jump-modal');
+      if (!modal || modal.classList.contains('hidden')) {
+        if (e.key === 'Escape') {
+          closeMobileDrawer();
+          closeKillModal();
+        }
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closeQuickJump();
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (quickJumpFiltered.length > 0) {
+          quickJumpIndex = (quickJumpIndex + 1) % quickJumpFiltered.length;
+          renderQuickJumpList(document.getElementById('quick-jump-input')?.value || '');
+        }
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (quickJumpFiltered.length > 0) {
+          quickJumpIndex = (quickJumpIndex - 1 + quickJumpFiltered.length) % quickJumpFiltered.length;
+          renderQuickJumpList(document.getElementById('quick-jump-input')?.value || '');
+        }
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        executeQuickJump(quickJumpIndex);
+      }
+    });
+
+    window.addEventListener('resize', scheduleChartResize);
+
+    /* ==================== NAVIGATION & TABS ==================== */
     function setView(view) {
       currentView = view;
       updateViewTabs();
@@ -726,6 +1344,7 @@
         termEl.classList.remove('hidden');
         fetchDashboard();
         fetchLiveChart();
+        scheduleChartResize();
       }
     }
 
@@ -733,8 +1352,14 @@
       document.querySelectorAll('.view-tab').forEach((btn) => {
         const active = btn.dataset.view === currentView;
         btn.className = active
-          ? 'view-tab flex-1 sm:flex-none px-3 py-1.5 rounded-lg text-xs font-semibold transition bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm'
-          : 'view-tab flex-1 sm:flex-none px-3 py-1.5 rounded-lg text-xs font-semibold transition text-zinc-400 hover:text-zinc-200 border border-transparent';
+          ? 'sb-nav-btn view-tab w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs font-semibold transition bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 shadow-sm'
+          : 'sb-nav-btn view-tab w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs font-medium transition text-zinc-400 border border-transparent hover:text-zinc-100 hover:bg-white/[0.05]';
+      });
+      document.querySelectorAll('.mobile-view-tab').forEach((btn) => {
+        const active = btn.dataset.view === currentView;
+        btn.className = active
+          ? 'mobile-view-tab py-1.5 rounded-lg text-xs font-semibold transition text-center bg-emerald-500/20 text-emerald-300 border border-emerald-500/35'
+          : 'mobile-view-tab py-1.5 rounded-lg text-xs font-medium transition text-center text-zinc-400 border border-transparent hover:text-zinc-200';
       });
     }
 
@@ -751,15 +1376,24 @@
       document.querySelectorAll('.market-tab').forEach((btn) => {
         const active = btn.dataset.market === currentMarket;
         btn.className = active
-          ? 'market-tab flex-1 sm:flex-none px-4 py-1.5 rounded-lg text-xs font-semibold transition bg-zinc-100 text-zinc-950 shadow-sm'
-          : 'market-tab flex-1 sm:flex-none px-4 py-1.5 rounded-lg text-xs font-semibold transition text-zinc-400 hover:text-zinc-200';
+          ? 'sb-nav-btn market-tab w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold transition bg-white/[0.10] text-white border border-white/[0.12]'
+          : 'sb-nav-btn market-tab w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-xl text-xs font-medium transition text-zinc-400 border border-transparent hover:text-zinc-100 hover:bg-white/[0.05]';
+      });
+      document.querySelectorAll('.mobile-market-tab').forEach((btn) => {
+        const active = btn.dataset.market === currentMarket;
+        btn.className = active
+          ? 'mobile-market-tab py-1 rounded-lg text-[11px] font-mono font-semibold transition text-center bg-zinc-100 text-zinc-950'
+          : 'mobile-market-tab py-1 rounded-lg text-[11px] font-mono font-semibold transition text-center text-zinc-400 hover:text-zinc-200';
       });
     }
 
+    /* ==================== CHARTS & RENDERERS ==================== */
     function initChart() {
-      const ctx = document.getElementById('equityChart').getContext('2d');
-      const gradient = ctx.createLinearGradient(0, 0, 0, 240);
-      gradient.addColorStop(0, 'rgba(16, 185, 129, 0.35)');
+      const canvas = document.getElementById('equityChart');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const gradient = ctx.createLinearGradient(0, 0, 0, 220);
+      gradient.addColorStop(0, 'rgba(16, 185, 129, 0.32)');
       gradient.addColorStop(1, 'rgba(16, 185, 129, 0.0)');
 
       equityChart = new Chart(ctx, {
@@ -771,7 +1405,7 @@
             data: [],
             borderColor: '#10b981',
             backgroundColor: gradient,
-            borderWidth: 2.2,
+            borderWidth: 2,
             fill: true,
             tension: 0.35,
             pointRadius: 0,
@@ -785,23 +1419,23 @@
           plugins: {
             legend: { display: false },
             tooltip: {
-              backgroundColor: '#18181b',
-              borderColor: '#3f3f46',
+              backgroundColor: '#111620',
+              borderColor: 'rgba(255,255,255,0.12)',
               borderWidth: 1,
               titleColor: '#a1a1aa',
               bodyColor: '#f4f4f5',
               callbacks: {
-                label: (ctx) => ` ${fmtUsd(ctx.parsed.y)}`
+                label: (c) => ` ${fmtUsd(c.parsed.y)}`
               }
             }
           },
           scales: {
             x: {
               grid: { display: false },
-              ticks: { color: '#71717a', maxTicksLimit: 6, font: { size: 10 } }
+              ticks: { color: '#71717a', maxTicksLimit: 5, font: { size: 10 } }
             },
             y: {
-              grid: { color: 'rgba(63, 63, 70, 0.3)' },
+              grid: { color: 'rgba(255, 255, 255, 0.06)' },
               ticks: {
                 color: '#71717a',
                 font: { size: 10 },
@@ -815,6 +1449,7 @@
 
     function renderChart(curve) {
       if (!equityChart) initChart();
+      if (!equityChart) return;
       const labels = curve.map((pt) => {
         const d = new Date(pt.timestamp);
         return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -832,28 +1467,29 @@
         const toggleBg = s.enabled ? 'bg-emerald-500' : 'bg-zinc-700';
         const toggleKnob = s.enabled ? 'translate-x-5' : 'translate-x-0.5';
         return `
-          <div class="glass-card rounded-2xl p-3.5 flex flex-col justify-between">
+          <div class="glass-card rounded-2xl p-3.5 sm:p-4 flex flex-col justify-between">
             <div>
               <div class="flex items-start justify-between gap-2">
-                <div>
-                  <h3 class="text-sm font-semibold text-white">${s.display_name}</h3>
-                  <span class="inline-block mt-1 px-2 py-0.5 rounded-md text-[10px] font-mono bg-zinc-800 text-zinc-300 border border-zinc-700/70">${s.target_regime}</span>
+                <div class="min-w-0">
+                  <h3 class="text-sm font-semibold text-white truncate">${escapeHtml(s.display_name)}</h3>
+                  <span class="inline-block mt-1 px-2 py-0.5 rounded-md text-[10px] font-medium bg-white/[0.06] text-zinc-300 border border-white/[0.08]">${escapeHtml(formatRegimeName(s.target_regime))}</span>
                 </div>
                 <button
-                  onclick="toggleStrategy('${s.name}')"
-                  aria-label="Toggle ${s.display_name}"
+                  type="button"
+                  onclick="toggleStrategy('${escapeHtml(s.name)}')"
+                  aria-label="Toggle ${escapeHtml(s.display_name)}"
                   class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full ${toggleBg} transition-colors duration-200 focus:outline-none">
                   <span class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 mt-0.5 ${toggleKnob}"></span>
                 </button>
               </div>
-              <p class="mt-2 text-[11px] text-zinc-400 leading-snug">${s.description}</p>
+              <p class="mt-2 text-[11px] text-zinc-400 leading-snug">${escapeHtml(s.description)}</p>
             </div>
-            <div class="mt-3 pt-2.5 border-t border-zinc-800/80 space-y-1 text-xs font-mono">
-              <div class="flex items-center justify-between">
+            <div class="mt-3 pt-2.5 border-t border-white/[0.07] space-y-1 text-xs font-mono tabular-nums">
+              <div class="flex items-center justify-between gap-2">
                 <span class="${pnlColor} font-semibold">${fmtSignedUsd(s.net_pnl_usd)}</span>
-                <span class="text-zinc-400">WR ${s.win_rate.toFixed(1)}% · ${s.total_trades}t</span>
+                <span class="text-zinc-400">WR ${Number(s.win_rate || 0).toFixed(1)}% · ${s.total_trades}t</span>
               </div>
-              <div class="flex items-center justify-between text-[11px] text-zinc-400">
+              <div class="flex items-center justify-between gap-2 text-[11px] text-zinc-400">
                 <span>PF <span class="text-zinc-200">${Number(s.profit_factor ?? 0).toFixed(2)}</span></span>
                 <span>Max DD <span class="text-rose-300">${Number(s.max_drawdown_pct ?? 0).toFixed(2)}%</span></span>
               </div>
@@ -872,28 +1508,28 @@
       const priceLabel = isOpen ? 'Live' : 'Exit';
 
       return `
-        <div class="rounded-xl bg-zinc-900/75 border border-zinc-800/90 p-3">
+        <div class="glass-subcard rounded-xl p-3">
           <div class="flex items-center justify-between gap-2">
-            <div class="flex items-center gap-2">
-              <span class="text-sm font-bold font-mono text-white">${t.symbol}</span>
-              <span class="px-1.5 py-0.5 rounded text-[10px] font-bold border ${sideBadge}">${t.side}</span>
-              <span class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-zinc-800 text-zinc-400">${t.market}</span>
+            <div class="flex items-center gap-1.5 min-w-0 flex-wrap">
+              <span class="text-sm font-bold font-mono text-white">${escapeHtml(t.symbol)}</span>
+              <span class="px-1.5 py-0.5 rounded text-[10px] font-bold border ${sideBadge}">${escapeHtml(t.side)}</span>
+              <span class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-white/[0.06] text-zinc-400">${escapeHtml(t.market)}</span>
             </div>
-            <div class="text-right font-mono">
+            <div class="text-right font-mono tabular-nums shrink-0">
               <span class="text-sm font-bold ${pnlColor}">${fmtSignedUsd(t.pnl_usd)}</span>
-              <span class="text-[11px] ${pnlColor} ml-1">(${t.pnl_pct >= 0 ? '+' : ''}${t.pnl_pct.toFixed(2)}%)</span>
+              <span class="text-[11px] ${pnlColor} ml-1">(${t.pnl_pct >= 0 ? '+' : ''}${Number(t.pnl_pct || 0).toFixed(2)}%)</span>
             </div>
           </div>
-          <div class="mt-2 grid grid-cols-3 gap-2 text-[11px] font-mono text-zinc-400">
-            <div>Entry: <span class="text-zinc-200">${fmtPrice(t.entry_price, t.symbol)}</span></div>
-            <div>${priceLabel}: <span class="text-zinc-200">${fmtPrice(priceValue, t.symbol)}</span></div>
-            <div class="text-right text-zinc-400">${t.strategy_name}</div>
+          <div class="mt-2 grid grid-cols-3 gap-2 text-[11px] font-mono text-zinc-400 tabular-nums">
+            <div class="truncate">Entry: <span class="text-zinc-200">${fmtPrice(t.entry_price, t.symbol)}</span></div>
+            <div class="truncate">${priceLabel}: <span class="text-zinc-200">${fmtPrice(priceValue, t.symbol)}</span></div>
+            <div class="text-right text-zinc-400 truncate">${escapeHtml(t.strategy_name)}</div>
           </div>
-          <div class="mt-1 flex items-center justify-between text-[10px] font-mono text-zinc-500">
+          <div class="mt-1 flex items-center justify-between text-[10px] font-mono text-zinc-500 tabular-nums">
             <span>SL: ${fmtPrice(t.stop_loss, t.symbol)}</span>
             <span>TP: ${fmtPrice(t.take_profit, t.symbol)}</span>
           </div>
-          <p class="mt-2 text-[11px] text-zinc-400 leading-snug border-t border-zinc-800/70 pt-1.5">${t.entry_reason}</p>
+          <p class="mt-2 text-[11px] text-zinc-400 leading-snug border-t border-white/[0.06] pt-1.5 break-words">${escapeHtml(t.entry_reason)}</p>
         </div>
       `;
     }
@@ -913,43 +1549,67 @@
         : '<div class="text-xs text-zinc-500 py-6 text-center">No closed trades recorded yet.</div>';
     }
 
+    /* CRITICAL MOBILE LOG FIX: Structured 2-Line Rows with Full-Width Wrapping */
     function renderLogs(logs) {
       document.getElementById('log-count').textContent = `(${logs.length})`;
       const drawer = document.getElementById('log-drawer');
+      if (!logs.length) {
+        drawer.innerHTML = '<div class="text-xs text-zinc-500 py-4 text-center">No system logs recorded yet.</div>';
+        return;
+      }
       drawer.innerHTML = logs.map((l) => {
-        const ts = new Date(l.timestamp).toLocaleTimeString();
-        let lvlClass = 'text-zinc-400';
-        if (l.level === 'INFO') lvlClass = 'text-emerald-400';
-        else if (l.level === 'WARN') lvlClass = 'text-amber-400';
-        else if (l.level === 'ERROR' || l.level === 'CRITICAL') lvlClass = 'text-rose-400 font-bold';
-        return `<div class="flex gap-2"><span class="text-zinc-600 shrink-0">${ts}</span><span class="${lvlClass} shrink-0">[${l.level}]</span><span class="text-zinc-400 shrink-0">${l.source}:</span><span class="text-zinc-200">${l.message}</span></div>`;
+        const ts = new Date(l.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        let badgeCls = 'bg-zinc-800 text-zinc-300 border-zinc-700';
+        if (l.level === 'INFO') badgeCls = 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30';
+        else if (l.level === 'WARN') badgeCls = 'bg-amber-500/15 text-amber-300 border-amber-500/30';
+        else if (l.level === 'ERROR' || l.level === 'CRITICAL') badgeCls = 'bg-rose-500/20 text-rose-300 border-rose-500/40 font-bold';
+
+        return `
+          <div class="log-entry">
+            <div class="flex flex-wrap items-center gap-1.5 text-[10px] tabular-nums">
+              <span class="text-zinc-500 shrink-0">${escapeHtml(ts)}</span>
+              <span class="px-1.5 py-0.5 rounded border ${badgeCls} shrink-0">[${escapeHtml(l.level)}]</span>
+              <span class="px-1.5 py-0.5 rounded bg-white/[0.06] text-zinc-300 border border-white/[0.08] shrink-0">${escapeHtml(l.source)}</span>
+            </div>
+            <div class="log-message mt-1.5 text-xs text-zinc-200">${escapeHtml(l.message)}</div>
+          </div>
+        `;
       }).join('');
     }
 
     function applyDashboardData(data) {
       const { bot_state: bs, kpis } = data;
       document.getElementById('mode-pill-text').textContent = `${data.trading_mode} / DEMO MODE`;
+      const mobMode = document.getElementById('mobile-mode-pill');
+      if (mobMode) mobMode.textContent = data.trading_mode || 'PAPER';
 
       const hbDot = document.getElementById('heartbeat-dot');
+      const mobHbDot = document.getElementById('mobile-hb-dot');
       const hbText = document.getElementById('heartbeat-text');
       const btnResume = document.getElementById('btn-resume');
+      const btnResumeMob = document.getElementById('btn-resume-mobile');
       const btnKill = document.getElementById('btn-kill-switch');
+      const btnKillMob = document.getElementById('btn-kill-switch-mobile');
       const killBanner = document.getElementById('kill-banner');
 
       if (bs.kill_switch_active) {
-        hbDot.className = 'inline-block h-2 w-2 rounded-full bg-rose-500';
-        hbText.textContent = 'LOCKED';
-        btnResume.classList.remove('hidden');
-        btnResume.classList.add('inline-flex');
-        btnKill.classList.add('hidden');
+        if (hbDot) hbDot.className = 'inline-block h-1.5 w-1.5 rounded-full bg-rose-500 shrink-0';
+        if (mobHbDot) mobHbDot.className = 'inline-block h-2 w-2 rounded-full bg-rose-500 shrink-0';
+        if (hbText) hbText.textContent = 'LOCKED';
+        if (btnResume) { btnResume.classList.remove('hidden'); btnResume.classList.add('inline-flex'); }
+        if (btnResumeMob) { btnResumeMob.classList.remove('hidden'); btnResumeMob.classList.add('inline-flex'); }
+        if (btnKill) btnKill.classList.add('hidden');
+        if (btnKillMob) btnKillMob.classList.add('hidden');
         killBanner.classList.remove('hidden');
         document.getElementById('kill-reason').textContent = bs.kill_switch_reason || 'Kill Switch Active';
       } else {
-        hbDot.className = 'inline-block h-2 w-2 rounded-full bg-emerald-400 animate-pulse';
-        hbText.textContent = bs.is_running ? 'LIVE HEARTBEAT' : 'PAUSED';
-        btnResume.classList.add('hidden');
-        btnResume.classList.remove('inline-flex');
-        btnKill.classList.remove('hidden');
+        if (hbDot) hbDot.className = 'inline-block h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0';
+        if (mobHbDot) mobHbDot.className = 'inline-block h-2 w-2 rounded-full bg-emerald-400 animate-pulse shrink-0';
+        if (hbText) hbText.textContent = bs.is_running ? 'LIVE HEARTBEAT' : 'PAUSED';
+        if (btnResume) { btnResume.classList.add('hidden'); btnResume.classList.remove('inline-flex'); }
+        if (btnResumeMob) { btnResumeMob.classList.add('hidden'); btnResumeMob.classList.remove('inline-flex'); }
+        if (btnKill) btnKill.classList.remove('hidden');
+        if (btnKillMob) btnKillMob.classList.remove('hidden');
         killBanner.classList.add('hidden');
       }
 
@@ -960,15 +1620,15 @@
       const pnlPctEl = document.getElementById('kpi-pnl-pct');
       const pnlPositive = kpis.daily_pnl_usd >= 0;
       pnlUsdEl.textContent = fmtSignedUsd(kpis.daily_pnl_usd);
-      pnlUsdEl.className = `mt-1 text-xl font-bold font-mono ${pnlPositive ? 'text-emerald-400' : 'text-rose-400'}`;
-      pnlPctEl.textContent = `${kpis.daily_pnl_pct >= 0 ? '+' : ''}${kpis.daily_pnl_pct.toFixed(2)}%`;
-      pnlPctEl.className = `mt-1 text-xs font-mono ${pnlPositive ? 'text-emerald-400/80' : 'text-rose-400/80'}`;
+      pnlUsdEl.className = `mt-1.5 kpi-value font-bold font-mono ${pnlPositive ? 'text-emerald-400' : 'text-rose-400'}`;
+      pnlPctEl.textContent = `${kpis.daily_pnl_pct >= 0 ? '+' : ''}${Number(kpis.daily_pnl_pct || 0).toFixed(2)}%`;
+      pnlPctEl.className = `mt-1 text-xs font-mono tabular-nums ${pnlPositive ? 'text-emerald-400/80' : 'text-rose-400/80'}`;
 
-      document.getElementById('kpi-win-rate').textContent = `${kpis.win_rate.toFixed(1)}%`;
-      document.getElementById('kpi-regime').textContent = kpis.active_regime;
+      document.getElementById('kpi-win-rate').textContent = `${Number(kpis.win_rate || 0).toFixed(1)}%`;
+      document.getElementById('kpi-regime').textContent = formatRegimeName(kpis.active_regime);
 
-      const ddUsed = kpis.daily_loss_used_pct;
-      const ddMax = kpis.max_daily_loss_pct;
+      const ddUsed = Number(kpis.daily_loss_used_pct || 0);
+      const ddMax = Number(kpis.max_daily_loss_pct || 3);
       const ddPct = Math.min(100, (ddUsed / ddMax) * 100);
       document.getElementById('kpi-dd-label').textContent = `${ddUsed.toFixed(2)}% / ${ddMax.toFixed(2)}%`;
       const ddBar = document.getElementById('kpi-dd-bar');
@@ -986,26 +1646,26 @@
         const bybitDot = document.getElementById('pill-bybit-dot');
         const bybitText = document.getElementById('pill-bybit-text');
         if (bybit.status === 'CONNECTED_DEMO') {
-          bybitDot.className = 'h-1.5 w-1.5 rounded-full bg-emerald-400';
-          bybitText.textContent = 'BYBIT: DEMO';
+          bybitDot.className = 'h-1.5 w-1.5 rounded-full bg-emerald-400 shrink-0';
+          bybitText.textContent = 'DEMO';
         } else if (bybit.status === 'GEO_BLOCKED' || bybit.status === 'ERROR') {
-          bybitDot.className = 'h-1.5 w-1.5 rounded-full bg-rose-500';
-          bybitText.textContent = `BYBIT: ${bybit.status}`;
+          bybitDot.className = 'h-1.5 w-1.5 rounded-full bg-rose-500 shrink-0';
+          bybitText.textContent = String(bybit.status);
         } else {
-          bybitDot.className = 'h-1.5 w-1.5 rounded-full bg-amber-400';
-          bybitText.textContent = 'BYBIT: PAPER';
+          bybitDot.className = 'h-1.5 w-1.5 rounded-full bg-amber-400 shrink-0';
+          bybitText.textContent = 'PAPER';
         }
 
         const forexDot = document.getElementById('pill-forex-dot');
         const forexText = document.getElementById('pill-forex-text');
         if (forexText && forex.mode) {
-          forexText.textContent = `FOREX: ${String(forex.mode).toUpperCase()}`;
+          forexText.textContent = String(forex.mode).toUpperCase();
           if (forexDot) {
             forexDot.className = forex.status === 'CONNECTED_PRACTICE' || forex.status === 'CONNECTED_DEMO'
-              ? 'h-1.5 w-1.5 rounded-full bg-emerald-400'
+              ? 'h-1.5 w-1.5 rounded-full bg-emerald-400 shrink-0'
               : forex.status === 'ERROR'
-                ? 'h-1.5 w-1.5 rounded-full bg-rose-500'
-                : 'h-1.5 w-1.5 rounded-full bg-amber-400';
+                ? 'h-1.5 w-1.5 rounded-full bg-rose-500 shrink-0'
+                : 'h-1.5 w-1.5 rounded-full bg-amber-400 shrink-0';
           }
         }
 
@@ -1014,14 +1674,14 @@
         const sessText = document.getElementById('pill-fx-session-text');
         if (fxSess && sessDot && sessText) {
           if (fxSess.is_news_blackout) {
-            sessDot.className = 'h-1.5 w-1.5 rounded-full bg-rose-500 animate-pulse';
-            sessText.textContent = 'FX: NEWS BLACKOUT';
+            sessDot.className = 'h-1.5 w-1.5 rounded-full bg-rose-500 animate-pulse shrink-0';
+            sessText.textContent = 'News Blackout';
           } else if (fxSess.can_trade) {
-            sessDot.className = 'h-1.5 w-1.5 rounded-full bg-emerald-400';
-            sessText.textContent = `FX: ${String(fxSess.session_name || 'OPEN').replace(/_/g, ' ')}`;
+            sessDot.className = 'h-1.5 w-1.5 rounded-full bg-emerald-400 shrink-0';
+            sessText.textContent = formatRegimeName(fxSess.session_name || 'OPEN');
           } else {
-            sessDot.className = 'h-1.5 w-1.5 rounded-full bg-amber-400';
-            sessText.textContent = `FX PAUSED: ${String(fxSess.session_name || 'CLOSED').replace(/_/g, ' ')}`;
+            sessDot.className = 'h-1.5 w-1.5 rounded-full bg-amber-400 shrink-0';
+            sessText.textContent = `Paused · ${formatRegimeName(fxSess.session_name || 'CLOSED')}`;
           }
         }
       }
@@ -1033,29 +1693,29 @@
         const scoreEl = document.getElementById('conf-score');
         scoreEl.textContent = `${score} / 100`;
         scoreEl.className = score >= 65
-          ? 'text-sm font-bold font-mono px-2.5 py-0.5 rounded-lg bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
-          : 'text-sm font-bold font-mono px-2.5 py-0.5 rounded-lg bg-zinc-800 text-zinc-200 border border-zinc-700/70';
+          ? 'text-xs font-bold font-mono px-2 py-0.5 rounded-lg bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 whitespace-nowrap tabular-nums shrink-0'
+          : 'text-xs font-bold font-mono px-2 py-0.5 rounded-lg bg-white/[0.06] text-zinc-200 border border-white/[0.09] whitespace-nowrap tabular-nums shrink-0';
 
         const htfEl = document.getElementById('conf-htf');
         htfEl.textContent = lc.htf_bias || 'UNAVAILABLE';
         htfEl.className = lc.htf_bias === 'BULLISH'
-          ? 'mt-1 text-xs sm:text-sm font-bold font-mono text-emerald-400'
+          ? 'mt-1 text-xs font-bold font-mono text-emerald-400 truncate'
           : lc.htf_bias === 'BEARISH'
-            ? 'mt-1 text-xs sm:text-sm font-bold font-mono text-rose-400'
-            : 'mt-1 text-xs sm:text-sm font-bold font-mono text-zinc-300';
+            ? 'mt-1 text-xs font-bold font-mono text-rose-400 truncate'
+            : 'mt-1 text-xs font-bold font-mono text-zinc-300 truncate';
 
         const vwapEl = document.getElementById('conf-vwap');
         vwapEl.textContent = lc.vwap_aligned ? 'ALIGNED' : 'UNALIGNED';
         vwapEl.className = lc.vwap_aligned
-          ? 'mt-1 text-xs sm:text-sm font-bold font-mono text-emerald-400'
-          : 'mt-1 text-xs sm:text-sm font-bold font-mono text-zinc-400';
+          ? 'mt-1 text-xs font-bold font-mono text-emerald-400 truncate'
+          : 'mt-1 text-xs font-bold font-mono text-zinc-400 truncate';
 
         const volRatio = Number(lc.volume_ratio || 1.0);
         const volEl = document.getElementById('conf-vol');
         volEl.textContent = `${volRatio.toFixed(2)}x`;
         volEl.className = volRatio >= 1.15
-          ? 'mt-1 text-xs sm:text-sm font-bold font-mono text-emerald-400'
-          : 'mt-1 text-xs sm:text-sm font-bold font-mono text-zinc-300';
+          ? 'mt-1 text-xs font-bold font-mono text-emerald-400 tabular-nums'
+          : 'mt-1 text-xs font-bold font-mono text-zinc-300 tabular-nums';
       }
     }
 
@@ -1073,7 +1733,7 @@
 
       const netEl = document.getElementById('sum-net-pnl');
       netEl.textContent = fmtSignedUsd(s.net_pnl_usd);
-      netEl.className = `mt-0.5 text-2xl font-bold font-mono ${s.net_pnl_usd >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
+      netEl.className = `mt-0.5 kpi-value-lg font-bold font-mono ${s.net_pnl_usd >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
 
       const wr = Number(s.win_rate_pct || 0);
       const be = Number(s.break_even_win_rate_pct || 0);
@@ -1095,8 +1755,14 @@
       document.getElementById('sum-pf').textContent = Number(s.profit_factor || 0).toFixed(2);
       const expEl = document.getElementById('sum-expectancy');
       expEl.textContent = fmtSignedUsd(s.expectancy_usd);
-      expEl.className = `mt-1 text-xl font-bold font-mono ${s.expectancy_usd >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
-      document.getElementById('sum-win-loss').textContent = `${fmtUsd(s.avg_win_usd)} / ${fmtUsd(s.avg_loss_usd)}`;
+      expEl.className = `mt-1.5 kpi-value font-bold font-mono ${s.expectancy_usd >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
+
+      /* Clean non-splitting Avg Win vs Loss layout */
+      document.getElementById('sum-win-loss').innerHTML =
+        `<span class="text-emerald-300 whitespace-nowrap">${fmtUsd(s.avg_win_usd)}</span>` +
+        `<span class="text-[11px] font-normal text-zinc-500">vs</span>` +
+        `<span class="text-rose-300 whitespace-nowrap">${fmtUsd(s.avg_loss_usd)}</span>`;
+
       document.getElementById('sum-rr').textContent = `Avg R:R ${Number(s.avg_rr_ratio || 0).toFixed(2)}x`;
       document.getElementById('sum-dd').textContent = `${Number(s.max_drawdown_pct || 0).toFixed(2)}%`;
 
@@ -1104,7 +1770,7 @@
       document.getElementById('sum-headline').textContent = pe.headline || 'Summary ready.';
       const bulletsEl = document.getElementById('sum-bullets');
       bulletsEl.innerHTML = (pe.bullets || []).map((b) =>
-        `<li class="flex items-start gap-2"><span class="mt-1.5 h-1.5 w-1.5 rounded-full bg-emerald-400 shrink-0"></span><span>${b}</span></li>`
+        `<li class="flex items-start gap-2"><span class="mt-1.5 h-1.5 w-1.5 rounded-full bg-emerald-400 shrink-0"></span><span class="min-w-0 break-words">${escapeHtml(b)}</span></li>`
       ).join('');
 
       const stratEl = document.getElementById('sum-strategy-list');
@@ -1112,19 +1778,19 @@
         const pnlColor = st.net_pnl_usd >= 0 ? 'text-emerald-400' : 'text-rose-400';
         const rankBadge = idx === 0
           ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
-          : 'bg-zinc-800 text-zinc-400 border-zinc-700/70';
+          : 'bg-white/[0.06] text-zinc-400 border-white/[0.08]';
         return `
-          <div class="rounded-xl bg-zinc-900/75 border border-zinc-800/90 p-3 flex items-center justify-between gap-2">
+          <div class="glass-subcard rounded-xl p-3 flex items-center justify-between gap-2">
             <div class="min-w-0">
               <div class="flex items-center gap-2">
-                <span class="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border ${rankBadge}">#${idx + 1}</span>
-                <span class="text-xs sm:text-sm font-semibold text-white truncate">${st.display_name}</span>
+                <span class="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border ${rankBadge} shrink-0">#${idx + 1}</span>
+                <span class="text-xs sm:text-sm font-semibold text-white truncate">${escapeHtml(st.display_name)}</span>
               </div>
-              <p class="mt-1 text-[11px] font-mono text-zinc-400">
-                ${st.target_regime} · WR ${Number(st.win_rate_pct || 0).toFixed(1)}% · ${st.total_trades}t · PF ${Number(st.profit_factor || 0).toFixed(2)}
+              <p class="mt-1 text-[11px] font-mono text-zinc-400 tabular-nums truncate">
+                ${escapeHtml(formatRegimeName(st.target_regime))} · WR ${Number(st.win_rate_pct || 0).toFixed(1)}% · ${st.total_trades}t · PF ${Number(st.profit_factor || 0).toFixed(2)}
               </p>
             </div>
-            <div class="text-right font-mono shrink-0">
+            <div class="text-right font-mono tabular-nums shrink-0">
               <p class="text-sm font-bold ${pnlColor}">${fmtSignedUsd(st.net_pnl_usd)}</p>
               <p class="text-[10px] text-zinc-500">${st.enabled ? 'ENABLED' : 'PAUSED'}</p>
             </div>
@@ -1136,13 +1802,17 @@
       const shieldBadge = document.getElementById('sum-shield-badge');
       if (shield.kill_switch_active) {
         shieldBadge.textContent = 'KILL SWITCH LOCKED';
-        shieldBadge.className = 'text-[11px] font-mono px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40';
+        shieldBadge.className = 'text-[10px] font-mono px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40 shrink-0';
       } else {
         shieldBadge.textContent = 'ARMED';
-        shieldBadge.className = 'text-[11px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30';
+        shieldBadge.className = 'text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 shrink-0';
       }
-      document.getElementById('sum-shield-dd').textContent =
-        `${Number(shield.daily_loss_used_pct || 0).toFixed(2)}% / ${Number(shield.max_daily_loss_pct || 3).toFixed(2)}%`;
+
+      /* Clean non-splitting Daily Loss Used layout */
+      document.getElementById('sum-shield-dd').innerHTML =
+        `<span class="text-base sm:text-lg font-bold text-white whitespace-nowrap">${Number(shield.daily_loss_used_pct || 0).toFixed(2)}%</span>` +
+        `<span class="text-[11px] font-normal text-zinc-400 whitespace-nowrap">/ ${Number(shield.max_daily_loss_pct || 3).toFixed(2)}% max</span>`;
+
       document.getElementById('sum-shield-skips').textContent = String(shield.total_protected_skips || 0);
       document.getElementById('sum-shield-conf').textContent = String(shield.confluence_blocked_count || 0);
       document.getElementById('sum-shield-sess').textContent = String(shield.session_blocked_count || 0);
@@ -1151,8 +1821,8 @@
       regimeEl.innerHTML = (s.regime_breakdown || []).map((r) => {
         const pnlColor = r.net_pnl_usd >= 0 ? 'text-emerald-400' : 'text-rose-400';
         return `
-          <div class="rounded-lg bg-zinc-900/70 border border-zinc-800/80 p-2">
-            <p class="text-[10px] text-zinc-400 truncate">${r.regime}</p>
+          <div class="glass-subcard rounded-lg p-2.5 tabular-nums">
+            <p class="text-[11px] font-sans font-medium text-zinc-300 truncate">${escapeHtml(formatRegimeName(r.regime))}</p>
             <p class="mt-0.5 text-xs font-bold ${pnlColor}">${fmtSignedUsd(r.net_pnl_usd)}</p>
             <p class="text-[10px] text-zinc-500">WR ${Number(r.win_rate_pct || 0).toFixed(0)}% · ${r.total_trades}t</p>
           </div>
@@ -1215,6 +1885,7 @@
     }
 
     function openKillModal() {
+      closeMobileDrawer();
       document.getElementById('kill-modal').classList.remove('hidden');
     }
 
@@ -1238,6 +1909,7 @@
     }
 
     async function resumeBot() {
+      closeMobileDrawer();
       const res = await fetch('/api/bot/resume', { method: 'POST' });
       if (res.status === 401) {
         handleAuthExpired();
@@ -1268,19 +1940,19 @@
       liveCandleChart = LightweightCharts.createChart(container, {
         autoSize: true,
         layout: {
-          background: { color: '#09090b' },
+          background: { color: '#07090d' },
           textColor: '#a1a1aa',
           fontFamily: "'JetBrains Mono', ui-monospace, monospace",
           fontSize: 11,
         },
         grid: {
-          vertLines: { color: 'rgba(63, 63, 70, 0.22)' },
-          horzLines: { color: 'rgba(63, 63, 70, 0.22)' },
+          vertLines: { color: 'rgba(255, 255, 255, 0.04)' },
+          horzLines: { color: 'rgba(255, 255, 255, 0.04)' },
         },
         crosshair: { mode: 0 },
-        rightPriceScale: { borderColor: 'rgba(63, 63, 70, 0.45)' },
+        rightPriceScale: { borderColor: 'rgba(255, 255, 255, 0.09)' },
         timeScale: {
-          borderColor: 'rgba(63, 63, 70, 0.45)',
+          borderColor: 'rgba(255, 255, 255, 0.09)',
           timeVisible: true,
           secondsVisible: false,
         },
@@ -1304,7 +1976,7 @@
         const active = btn.dataset.symbol === chartSymbol;
         btn.className = active
           ? 'chart-sym-btn shrink-0 px-3 py-1 rounded-lg text-[11px] font-mono font-semibold transition bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-          : 'chart-sym-btn shrink-0 px-3 py-1 rounded-lg text-[11px] font-mono font-semibold transition bg-zinc-900 text-zinc-400 border border-zinc-800 hover:text-zinc-200';
+          : 'chart-sym-btn shrink-0 px-3 py-1 rounded-lg text-[11px] font-mono font-semibold transition bg-white/[0.04] text-zinc-400 border border-white/[0.08] hover:text-zinc-200';
       });
       document.querySelectorAll('.chart-iv-btn').forEach((btn) => {
         const active = btn.dataset.interval === chartInterval;
@@ -1456,8 +2128,8 @@
             plugins: {
               legend: { display: false },
               tooltip: {
-                backgroundColor: '#18181b',
-                borderColor: '#3f3f46',
+                backgroundColor: '#111620',
+                borderColor: 'rgba(255,255,255,0.12)',
                 borderWidth: 1,
                 callbacks: {
                   label: (c) => ` ${c.dataset.label}: ${fmtUsd(c.parsed.y)}`
@@ -1470,7 +2142,7 @@
                 ticks: { color: '#71717a', maxTicksLimit: 7, font: { size: 10 } }
               },
               y: {
-                grid: { color: 'rgba(63, 63, 70, 0.3)' },
+                grid: { color: 'rgba(255, 255, 255, 0.06)' },
                 ticks: {
                   color: '#71717a',
                   font: { size: 10 },
@@ -1495,13 +2167,13 @@
       const src = String(r.data_source || 'HISTORICAL');
       srcPill.textContent = src.replace(/_/g, ' ');
       srcPill.className = src.includes('SYNTHETIC')
-        ? 'text-[10px] font-mono font-semibold px-2.5 py-1 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30'
-        : 'text-[10px] font-mono font-semibold px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30';
+        ? 'text-[10px] font-mono font-semibold px-2.5 py-1 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 shrink-0'
+        : 'text-[10px] font-mono font-semibold px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 shrink-0';
 
       const retEl = document.getElementById('lab-net-return');
       const netPct = Number(r.net_pnl_pct || 0);
       retEl.textContent = `${netPct >= 0 ? '+' : ''}${netPct.toFixed(2)}%`;
-      retEl.className = `mt-1 text-xl font-bold font-mono ${netPct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
+      retEl.className = `mt-1 kpi-value font-bold font-mono ${netPct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
 
       const bnh = Number(r.buy_and_hold_pct || 0);
       document.getElementById('lab-bnh').textContent = `vs B&H ${bnh >= 0 ? '+' : ''}${bnh.toFixed(2)}%`;
@@ -1512,7 +2184,7 @@
 
       const expEl = document.getElementById('lab-expectancy');
       expEl.textContent = fmtSignedUsd(r.expectancy_usd);
-      expEl.className = `mt-1 text-xl font-bold font-mono ${Number(r.expectancy_usd || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
+      expEl.className = `mt-1 kpi-value font-bold font-mono ${Number(r.expectancy_usd || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
 
       document.getElementById('lab-max-dd').textContent = `${Number(r.max_drawdown_pct || 0).toFixed(2)}%`;
       document.getElementById('lab-cb-trips').textContent = `${r.circuit_breaker_trips || 0} CB trips`;
@@ -1533,7 +2205,7 @@
           const pnlCls = Number(st.net_pnl || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400';
           return `
             <tr>
-              <td class="py-2.5 pr-2 text-zinc-200 font-semibold">${name}</td>
+              <td class="py-2.5 pr-2 text-zinc-200 font-semibold">${escapeHtml(name)}</td>
               <td class="py-2.5 px-2 text-right text-zinc-300">${st.trades}</td>
               <td class="py-2.5 px-2 text-right text-zinc-300">${Number(st.win_rate || 0).toFixed(1)}%</td>
               <td class="py-2.5 pl-2 text-right font-bold ${pnlCls}">${fmtSignedUsd(st.net_pnl)}</td>
@@ -1557,18 +2229,18 @@
             ? '<span class="px-1.5 py-0.5 rounded text-[9px] font-mono bg-amber-500/15 text-amber-300 border border-amber-500/30">+1R PARTIAL</span>'
             : '';
           return `
-            <div class="rounded-xl bg-zinc-900/75 border border-zinc-800/90 p-2.5 text-[11px] font-mono">
+            <div class="glass-subcard rounded-xl p-2.5 text-[11px] font-mono tabular-nums">
               <div class="flex items-center justify-between gap-2">
                 <div class="flex items-center gap-1.5 flex-wrap">
-                  <span class="px-1.5 py-0.5 rounded text-[10px] font-bold border ${sideCls}">${t.side}</span>
-                  <span class="text-zinc-200 font-semibold">${t.strategy_name}</span>
+                  <span class="px-1.5 py-0.5 rounded text-[10px] font-bold border ${sideCls}">${escapeHtml(t.side)}</span>
+                  <span class="text-zinc-200 font-semibold">${escapeHtml(t.strategy_name)}</span>
                   ${partialBadge}
                 </div>
                 <span class="font-bold ${pnlCls}">${fmtSignedUsd(t.pnl_usd)}</span>
               </div>
-              <div class="mt-1.5 flex items-center justify-between text-[10px] text-zinc-400">
-                <span>In: ${fmtPrice(t.entry_price, r.symbol)} → Out: ${fmtPrice(t.exit_price, r.symbol)}</span>
-                <span class="text-zinc-500">${t.exit_reason}</span>
+              <div class="mt-1.5 flex items-center justify-between gap-2 text-[10px] text-zinc-400">
+                <span class="truncate">In: ${fmtPrice(t.entry_price, r.symbol)} → Out: ${fmtPrice(t.exit_price, r.symbol)}</span>
+                <span class="text-zinc-500 shrink-0">${escapeHtml(t.exit_reason)}</span>
               </div>
             </div>
           `;
@@ -1624,6 +2296,7 @@
       }
     }
 
+    /* ==================== PHONE PIN GATE & AUTH LIFECYCLE ==================== */
     function setPinError(message) {
       const errEl = document.getElementById('pin-error');
       if (!errEl) return;
@@ -1657,13 +2330,15 @@
 
     function updateLogoutButton() {
       const btn = document.getElementById('btn-logout');
-      if (!btn) return;
-      if (authEnabled && isAuthenticated) {
-        btn.classList.remove('hidden');
-        btn.classList.add('inline-flex');
-      } else {
-        btn.classList.add('hidden');
-        btn.classList.remove('inline-flex');
+      const btnMob = document.getElementById('btn-logout-mobile');
+      const show = authEnabled && isAuthenticated;
+      if (btn) {
+        btn.classList.toggle('hidden', !show);
+        btn.classList.toggle('inline-flex', show);
+      }
+      if (btnMob) {
+        btnMob.classList.toggle('hidden', !show);
+        btnMob.classList.toggle('inline-flex', show);
       }
     }
 
@@ -1693,6 +2368,8 @@
 
     function showPinOverlay(message) {
       stopPolling();
+      closeMobileDrawer();
+      closeQuickJump();
       const overlay = document.getElementById('pin-lock-overlay');
       if (overlay) overlay.classList.remove('hidden');
       updateLogoutButton();
@@ -1772,6 +2449,7 @@
     }
 
     async function bootstrapApp() {
+      initSidebarState();
       updateViewTabs();
       updateMarketTabs();
       updateChartPills();
