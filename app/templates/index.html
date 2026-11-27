@@ -1346,6 +1346,7 @@
             <option value="POLYGON">Polygon ($0.07)</option>
             <option value="APTOS">Aptos ($0.002)</option>
             <option value="LOCAL_BANK_NGN">Local Bank (0.5% + $0.50)</option>
+            <option value="BANK_WIRE">Bank Wire ($15.00 · Forex)</option>
           </select>
         </div>
       </div>
@@ -1488,19 +1489,22 @@
     }
 
     function fmtUsd(val) {
-      const num = Number(val || 0);
+      const raw = Number(val);
+      const num = Number.isFinite(raw) ? raw : 0;
       const sign = num < 0 ? '-' : '';
       return `${sign}$${Math.abs(num).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     }
 
     function fmtSignedUsd(val) {
-      const num = Number(val || 0);
+      const raw = Number(val);
+      const num = Number.isFinite(raw) ? raw : 0;
       const sign = num >= 0 ? '+' : '-';
       return `${sign}$${Math.abs(num).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     }
 
     function fmtPrice(val, symbol) {
-      const num = Number(val || 0);
+      const raw = Number(val);
+      const num = Number.isFinite(raw) ? raw : 0;
       const decimals = symbol && symbol.includes('_') && !symbol.includes('XAU') ? 5 : 2;
       return num.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
     }
@@ -1684,6 +1688,7 @@
         if (e.key === 'Escape') {
           closeMobileDrawer();
           closeKillModal();
+          closeChallengeModal();
         }
         return;
       }
@@ -1798,10 +1803,13 @@
           ? 'Cash-flow adjusted trading PnL'
           : 'Raw active trading balance';
       }
-      if (lastEquityCurveData.length) {
-        renderChart(lastEquityCurveData);
+      if (lastEquityCurveData.length || lastAdjustedCurveData.length || lastRawBalanceCurveData.length) {
+        renderChart(lastEquityCurveData, lastAdjustedCurveData, lastRawBalanceCurveData);
       }
     }
+
+    let lastAdjustedCurveData = [];
+    let lastRawBalanceCurveData = [];
 
     /* ==================== CHARTS & RENDERERS ==================== */
     function initChart() {
@@ -1871,17 +1879,22 @@
       });
     }
 
-    function renderChart(curve) {
+    function renderChart(curve, adjustedCurve, rawBalanceCurve) {
       lastEquityCurveData = Array.isArray(curve) ? curve : [];
+      if (Array.isArray(adjustedCurve)) lastAdjustedCurveData = adjustedCurve;
+      if (Array.isArray(rawBalanceCurve)) lastRawBalanceCurveData = rawBalanceCurve;
       if (!equityChart) initChart();
       if (!equityChart) return;
-      const labels = lastEquityCurveData.map((pt) => {
+      const activeSeries = equityCurveMode === 'adjusted'
+        ? (lastAdjustedCurveData.length ? lastAdjustedCurveData : lastEquityCurveData)
+        : (lastRawBalanceCurveData.length ? lastRawBalanceCurveData : lastEquityCurveData);
+      const labels = activeSeries.map((pt) => {
         const d = new Date(pt.timestamp);
         return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       });
-      const values = lastEquityCurveData.map((pt) => {
+      const values = activeSeries.map((pt) => {
         const val = equityCurveMode === 'adjusted'
-          ? Number(pt.adjusted_pnl_usd ?? 0)
+          ? Number((pt.adjusted_pnl_usd ?? pt.value) ?? 0)
           : Number(pt.value ?? 0);
         return Number.isFinite(val) ? val : 0;
       });
@@ -2114,7 +2127,7 @@
       ddBar.style.width = `${ddPct}%`;
       ddBar.className = `h-full rounded-full transition-all duration-300 ${ddPct > 70 ? 'bg-rose-500' : ddPct > 40 ? 'bg-amber-400' : 'bg-emerald-500'}`;
 
-      renderChart(data.equity_curve);
+      renderChart(data.equity_curve, data.adjusted_trading_pnl_curve, data.raw_active_balance_curve);
       renderStrategies(data.strategies);
       renderTrades(data.open_positions, data.closed_trades);
       renderLogs(data.system_logs);
@@ -3138,7 +3151,7 @@
         const data = await res.json();
         const items = Array.isArray(data.items) ? data.items : [];
         const pill = document.getElementById('w-rej-count-pill');
-        if (pill) pill.textContent = String(items.length);
+        if (pill) pill.textContent = String(data.total ?? items.length);
         const tbody = document.getElementById('wallet-rej-tbody');
         if (!tbody) return;
         if (!items.length) {
