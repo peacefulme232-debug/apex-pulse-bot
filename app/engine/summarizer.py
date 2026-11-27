@@ -9,17 +9,56 @@ from sqlalchemy.orm import Session
 from app.brokers.paper_sim import INITIAL_BYBIT_BALANCE, INITIAL_FOREX_BALANCE
 from app.config import settings
 from app.models import BotState, StrategyConfig, SystemLog, Trade
+from app.services.realism_engine import to_decimal
 
 STRATEGY_REGIME_FALLBACK: dict[str, str] = {
     "trend_rider": "TRENDING",
     "range_mean_reversion": "RANGE_BOUND",
     "volatility_breakout": "HIGH_VOLATILITY",
     "safety_standby": "DEFENSIVE",
+    "EMA_50_PULLBACK": "TRENDING_BULL",
+    "BREAKOUT_RETEST": "BREAKOUT_EXPANSION",
+    "RSI_DIVERGENCE_SNIPER": "REVERSAL_EXHAUSTION",
 }
+
+BRAIN_STRATEGIES: tuple[tuple[str, str, str], ...] = (
+    ("EMA_50_PULLBACK", "EMA 50 Pullback", "TRENDING_BULL"),
+    ("BREAKOUT_RETEST", "Breakout + Retest", "BREAKOUT_EXPANSION"),
+    ("RSI_DIVERGENCE_SNIPER", "RSI Divergence Sniper", "REVERSAL_EXHAUSTION"),
+)
 
 
 class BotSummarizer:
     """Computes quantitative edge metrics and translates them into beginner-friendly plain English."""
+
+    @staticmethod
+    def _compute_trade_gross_fees_net(trades: Iterable[Any]) -> tuple[float, float, float]:
+        """Return (gross_pnl_usd, fees_paid_usd, net_pnl_usd) across closed trades."""
+        gross_total = 0.0
+        fees_total = 0.0
+        net_total = 0.0
+        for t in trades:
+            if hasattr(t, "filled_exit_price"):
+                entry_fee = float(to_decimal(getattr(t, "entry_fee", 0)))
+                exit_fee = float(to_decimal(getattr(t, "exit_fee", 0)))
+                spread_cost = float(to_decimal(getattr(t, "spread_cost", 0)))
+                slippage_cost = float(to_decimal(getattr(t, "slippage_cost", 0)))
+                funding_swap = float(to_decimal(getattr(t, "funding_or_swap_fee", 0)))
+                trade_fees = entry_fee + exit_fee + spread_cost + slippage_cost + funding_swap
+                if t.filled_exit_price is not None:
+                    t_gross = float(to_decimal(getattr(t, "gross_pnl", 0)))
+                    t_net = float(to_decimal(getattr(t, "net_pnl", 0)))
+                else:
+                    t_net = float(getattr(t, "pnl_usd", 0.0) or 0.0)
+                    t_gross = t_net + trade_fees
+            else:
+                trade_fees = float(t.get("fees_paid_usd", 0.0) or 0.0)
+                t_net = float(t.get("pnl_usd", 0.0) or 0.0)
+                t_gross = float(t.get("gross_pnl_usd", t_net + trade_fees) or 0.0)
+            gross_total += t_gross
+            fees_total += trade_fees
+            net_total += t_net
+        return round(gross_total, 2), round(fees_total, 2), round(net_total, 2)
 
     @staticmethod
     def compute_core_metrics(
@@ -192,6 +231,7 @@ class BotSummarizer:
             enabled = bool(cfg.enabled) if cfg else True
 
             s_metrics = self.compute_core_metrics(strat_trades, starting_equity=starting_equity)
+            s_gross, s_fees, s_net = self._compute_trade_gross_fees_net(strat_trades)
             strategy_rankings.append(
                 {
                     "name": name,
@@ -202,7 +242,9 @@ class BotSummarizer:
                     "winning_trades": s_metrics["winning_trades"],
                     "losing_trades": s_metrics["losing_trades"],
                     "win_rate_pct": s_metrics["win_rate_pct"],
-                    "net_pnl_usd": s_metrics["net_pnl_usd"],
+                    "gross_pnl_usd": s_gross,
+                    "fees_paid_usd": s_fees,
+                    "net_pnl_usd": s_net,
                     "profit_factor": s_metrics["profit_factor"],
                 }
             )
@@ -214,6 +256,30 @@ class BotSummarizer:
             bucket["total_trades"] += s_metrics["total_closed_trades"]
             bucket["winning_trades"] += s_metrics["winning_trades"]
             bucket["net_pnl_usd"] = round(bucket["net_pnl_usd"] + s_metrics["net_pnl_usd"], 2)
+
+        # Always provide the 3 canonical Strategy Brain strategies with Trade Count, Win Rate, Gross PnL, Fees Paid, Net PnL
+        brain_strategy_performance: list[dict[str, Any]] = []
+        for strat_key, label, default_regime in BRAIN_STRATEGIES:
+            strat_trades = trades_by_strat.get(strat_key, [])
+            cfg = config_by_name.get(strat_key)
+            s_metrics = self.compute_core_metrics(strat_trades, starting_equity=starting_equity)
+            s_gross, s_fees, s_net = self._compute_trade_gross_fees_net(strat_trades)
+            brain_strategy_performance.append(
+                {
+                    "name": strat_key,
+                    "display_name": label,
+                    "target_regime": cfg.target_regime if cfg else default_regime,
+                    "enabled": bool(cfg.enabled) if cfg else True,
+                    "total_trades": s_metrics["total_closed_trades"],
+                    "winning_trades": s_metrics["winning_trades"],
+                    "losing_trades": s_metrics["losing_trades"],
+                    "win_rate_pct": s_metrics["win_rate_pct"],
+                    "gross_pnl_usd": s_gross,
+                    "fees_paid_usd": s_fees,
+                    "net_pnl_usd": s_net,
+                    "profit_factor": s_metrics["profit_factor"],
+                }
+            )
 
         strategy_rankings.sort(
             key=lambda item: (item["net_pnl_usd"], item["win_rate_pct"], item["total_trades"]),
@@ -253,7 +319,8 @@ class BotSummarizer:
         confluence_blocked = sum(
             1
             for log in logs
-            if log.source == "ConfluenceFilter" and "BLOCKED" in (log.message or "").upper()
+            if log.source in {"ConfluenceFilter", "ConfluenceEvaluator"}
+            and any(k in (log.message or "").upper() for k in ("BLOCKED", "VETOED"))
         )
         session_blocked = sum(
             1
@@ -286,6 +353,7 @@ class BotSummarizer:
             "best_strategy": best_strategy,
             "weakest_strategy": weakest_strategy,
             "strategy_rankings": strategy_rankings,
+            "brain_strategy_performance": brain_strategy_performance,
             "regime_breakdown": regime_breakdown,
             "risk_shield_report": risk_shield_report,
             "forex_session": forex_session,
