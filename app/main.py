@@ -126,6 +126,20 @@ class WalletSettingsPatchRequest(BaseModel):
     auto_sweep_network: Optional[str] = None
 
 
+class BrainConfigPatchRequest(BaseModel):
+    """Payload for updating Strategy Brain toggles, confluence/veto thresholds, and breaker reset."""
+
+    ema_50_pullback_enabled: Optional[bool] = None
+    breakout_retest_enabled: Optional[bool] = None
+    rsi_divergence_sniper_enabled: Optional[bool] = None
+    min_confluence_score: Optional[int] = Field(default=None, ge=65, le=90)
+    max_fee_drag_pct: Optional[float] = Field(default=None, gt=0.0, le=50.0)
+    breakeven_r_trigger: Optional[float] = Field(default=None, ge=0.5, le=5.0)
+    max_consecutive_losses: Optional[int] = Field(default=None, ge=1, le=10)
+    micro_shield_enabled: Optional[bool] = None
+    reset_circuit_breaker: Optional[bool] = None
+
+
 def _ensure_bot_state(db: Session, broker: PaperSimBroker) -> BotState:
     state = db.query(BotState).first()
     if state is None:
@@ -874,6 +888,24 @@ def create_app(database_url: Optional[str] = None) -> FastAPI:
             return list_execution_rejections(db=db, market=market, limit=limit, offset=offset)
         except WalletError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    @fastapi_app.get("/api/brain/telemetry", dependencies=[Depends(require_dashboard_auth)])
+    def get_brain_telemetry(
+        db: Session = Depends(db_dependency),
+    ) -> dict[str, Any]:
+        """Return per-symbol regime, 0-100 confluence breakdown, armed setups, divergences, and circuit breaker."""
+        _ensure_bot_state(db, broker)
+        return bot_runner.get_brain_telemetry(db)
+
+    @fastapi_app.patch("/api/brain/config", dependencies=[Depends(require_dashboard_auth)])
+    def patch_brain_config(
+        payload: BrainConfigPatchRequest,
+        db: Session = Depends(db_dependency),
+    ) -> dict[str, Any]:
+        """Toggle strategies, adjust confluence/veto thresholds, or reset the circuit breaker."""
+        _ensure_bot_state(db, broker)
+        updates = payload.model_dump(exclude_none=True)
+        return bot_runner.update_brain_config(db, updates)
 
     return fastapi_app
 

@@ -28,8 +28,17 @@ from app.engine.recovery import reconcile_startup_state
 from app.engine.risk_manager import RiskManager
 from app.engine.session_guard import SessionGuard
 from app.engine.strategies import StrategyDispatcher
-from app.models import BotState, StrategyConfig, SystemLog, Trade
+from app.models import ArmedRetestSetup, BotState, StrategyConfig, SystemLog, Trade, WalletAccount
+from app.services.confluence_evaluator import BrainConfig, ConfluenceEvaluator
 from app.services.notifier import TelegramNotifier
+from app.services.regime_router import RegimeRouter
+from app.services.strategies import (
+    BreakoutRetestStrategy,
+    CandidateSignal,
+    EmaPullbackStrategy,
+    RsiDivergenceSniperStrategy,
+)
+from app.services.trade_manager import TradeManager
 
 logger = logging.getLogger("apex_pulse.runner")
 
@@ -49,6 +58,7 @@ class BotRunner:
         confluence_filter: Optional[ConfluenceFilter] = None,
         session_guard: Optional[SessionGuard] = None,
         notifier: Optional[TelegramNotifier] = None,
+        brain_config: Optional[BrainConfig] = None,
     ) -> None:
         self._session_factory = session_factory
         self.broker = broker or PaperSimBroker(session_factory=session_factory)
@@ -69,6 +79,17 @@ class BotRunner:
         self.confluence_filter = confluence_filter or ConfluenceFilter()
         self.session_guard = session_guard or SessionGuard()
         self.notifier = notifier or TelegramNotifier()
+        self.brain_config = brain_config or BrainConfig()
+        self.regime_router = RegimeRouter()
+        self.ema_pullback = EmaPullbackStrategy()
+        self.breakout_retest = BreakoutRetestStrategy()
+        self.rsi_divergence_sniper = RsiDivergenceSniperStrategy()
+        self.confluence_evaluator = ConfluenceEvaluator(
+            config=self.brain_config,
+            divergence_detector=self.rsi_divergence_sniper,
+        )
+        self.trade_manager = TradeManager(config=self.brain_config)
+        self.brain_telemetry: dict[str, dict[str, Any]] = {}
         self._task: Optional[asyncio.Task[None]] = None
         self._stop_event = asyncio.Event()
         self._tick_lock = asyncio.Lock()
@@ -346,6 +367,204 @@ class BotRunner:
                     )
                 )
 
+    def _fetch_brain_candles(
+        self,
+        db: Session,
+        symbol: str,
+        market: str,
+    ) -> tuple[Any, Any, Optional[Any]]:
+        """Fetch closed H1, H4, and optional D1 OHLCV candles for Strategy Brain evaluation."""
+        h1_df: Any = None
+        h4_df: Any = None
+        d1_df: Any = None
+        if market == "BYBIT" and self.bybit_router.is_demo_active():
+            try:
+                bybit_broker = self.bybit_router.get_broker()
+                h1_df = bybit_broker.get_ohlcv(symbol, interval="60", limit=250)
+                h4_df = bybit_broker.get_ohlcv(symbol, interval="240", limit=250)
+            except BybitBrokerError as exc:
+                db.add(SystemLog(level="WARN", source="BybitBroker", message=f"{symbol} feed fallback: {exc}"))
+        elif market == "FOREX" and self.forex_router.is_cloud_active():
+            try:
+                fx_broker = self.forex_router.get_broker()
+                h1_df = fx_broker.get_ohlcv(symbol, interval="H1", limit=250)
+                h4_df = fx_broker.get_ohlcv(symbol, interval="H4", limit=250)
+            except (OandaBrokerError, DerivBrokerError) as exc:
+                db.add(SystemLog(level="WARN", source="ForexBroker", message=f"{symbol} feed fallback: {exc}"))
+
+        if h1_df is None:
+            h1_df = self.broker.get_ohlcv(symbol, interval="1h", limit=250)
+        if h4_df is None:
+            h4_df = self.broker.get_ohlcv(symbol, interval="4h", limit=250)
+        return h1_df, h4_df, d1_df
+
+    def _evaluate_brain_strategies(
+        self,
+        *,
+        db: Session,
+        symbol: str,
+        market_lower: str,
+        regime_decision: Any,
+        h1_candles: Any,
+        h4_candles: Any,
+        d1_candles: Optional[Any],
+    ) -> Optional[CandidateSignal]:
+        """Run allowed strategy for the classified regime (and advance any armed retest setup)."""
+        candidate: Optional[CandidateSignal] = None
+
+        # Always advance an already-armed Breakout+Retest setup so it decrements/triggers/invalidates
+        if self.brain_config.is_strategy_enabled("BREAKOUT_RETEST"):
+            existing_armed = self.breakout_retest.get_armed_setup(
+                db, symbol=symbol, market=market_lower
+            )
+            if existing_armed is not None:
+                candidate = self.breakout_retest.evaluate(
+                    db=db,
+                    symbol=symbol,
+                    market=market_lower,
+                    candles=h1_candles,
+                )
+                if candidate is not None:
+                    return candidate
+
+        for strategy_name in regime_decision.allowed_strategies:
+            if not self.brain_config.is_strategy_enabled(strategy_name):
+                continue
+            if strategy_name == "EMA_50_PULLBACK":
+                candidate = self.ema_pullback.evaluate(
+                    symbol=symbol,
+                    market=market_lower,
+                    regime=regime_decision,
+                    h1_candles=h1_candles,
+                    h4_candles=h4_candles,
+                )
+            elif strategy_name == "BREAKOUT_RETEST":
+                candidate = self.breakout_retest.evaluate(
+                    db=db,
+                    symbol=symbol,
+                    market=market_lower,
+                    candles=h1_candles,
+                )
+            elif strategy_name == "RSI_DIVERGENCE_SNIPER":
+                htf_source = d1_candles if d1_candles is not None else h4_candles
+                candidate = self.rsi_divergence_sniper.evaluate_sniper_entry(
+                    candles_htf=htf_source,
+                    candles_exec=h1_candles,
+                    symbol=symbol,
+                    market=market_lower,
+                )
+            if candidate is not None:
+                return candidate
+
+        return None
+
+    def get_brain_telemetry(self, db: Session) -> dict[str, Any]:
+        """Build live Strategy Brain telemetry for GET /api/brain/telemetry."""
+        from app.services.realism_engine import to_decimal
+        from app.services.wallet_service import compute_daily_pnl_isolated, lock_wallet_account
+
+        now = self._utcnow()
+        armed_rows = (
+            db.query(ArmedRetestSetup)
+            .filter(ArmedRetestSetup.status == "ARMED")
+            .order_by(ArmedRetestSetup.id.desc())
+            .all()
+        )
+        armed_list = [
+            {
+                "id": row.id,
+                "market": row.market,
+                "symbol": row.symbol,
+                "side": row.side,
+                "zone_low": float(row.zone_low),
+                "zone_high": float(row.zone_high),
+                "breakout_candle_range": float(row.breakout_candle_range),
+                "breakout_atr": float(row.breakout_atr),
+                "bars_remaining": int(row.bars_remaining),
+                "status": row.status,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            }
+            for row in armed_rows
+        ]
+
+        circuit_breaker: dict[str, Any] = {}
+        for mkt in ("bybit", "forex"):
+            w = lock_wallet_account(db, mkt)
+            until = w.circuit_breaker_until
+            if until is not None and until.tzinfo is None:
+                until = until.replace(tzinfo=timezone.utc)
+            is_locked = bool(until is not None and now < until)
+            _d_usd, d_pct = compute_daily_pnl_isolated(
+                current_active_equity=to_decimal(w.active_balance),
+                equity_baseline_day=to_decimal(w.equity_baseline_day),
+                fallback_capital=to_decimal(w.active_balance),
+            )
+            circuit_breaker[mkt] = {
+                "consecutive_losses": int(w.consecutive_losses or 0),
+                "max_consecutive_losses": self.brain_config.max_consecutive_losses,
+                "circuit_breaker_until": until.isoformat() if until else None,
+                "is_locked": is_locked,
+                "daily_pnl_pct": float(d_pct),
+                "micro_shield_active": bool(
+                    self.brain_config.micro_shield_enabled
+                    and float(w.active_balance) <= self.brain_config.micro_shield_threshold_usd
+                ),
+            }
+
+        active_divergences = [
+            {
+                "symbol": sym,
+                **snap["active_divergence"],
+            }
+            for sym, snap in self.brain_telemetry.items()
+            if snap.get("active_divergence") is not None
+        ]
+
+        return {
+            "config": self.brain_config.to_dict(),
+            "symbols": dict(self.brain_telemetry),
+            "armed_retest_setups": armed_list,
+            "active_divergences": active_divergences,
+            "circuit_breaker": circuit_breaker,
+        }
+
+    def update_brain_config(self, db: Session, updates: dict[str, Any]) -> dict[str, Any]:
+        """Apply PATCH /api/brain/config updates and optional circuit-breaker reset."""
+        from app.services.wallet_service import lock_wallet_account
+
+        reset_breaker = bool(updates.pop("reset_circuit_breaker", False))
+
+        for field_name, value in updates.items():
+            if value is not None and hasattr(self.brain_config, field_name):
+                setattr(self.brain_config, field_name, value)
+
+        # Keep matching StrategyConfig rows in sync if present
+        strategy_flag_map = {
+            "EMA_50_PULLBACK": self.brain_config.ema_50_pullback_enabled,
+            "BREAKOUT_RETEST": self.brain_config.breakout_retest_enabled,
+            "RSI_DIVERGENCE_SNIPER": self.brain_config.rsi_divergence_sniper_enabled,
+        }
+        for strat_name, enabled_flag in strategy_flag_map.items():
+            row = db.query(StrategyConfig).filter(StrategyConfig.name == strat_name).first()
+            if row is not None:
+                row.enabled = bool(enabled_flag)
+
+        if reset_breaker:
+            for mkt in ("bybit", "forex"):
+                w = lock_wallet_account(db, mkt)
+                w.consecutive_losses = 0
+                w.circuit_breaker_until = None
+            db.add(
+                SystemLog(
+                    level="INFO",
+                    source="BrainConfig",
+                    message="Circuit breaker manually reset via /api/brain/config.",
+                )
+            )
+
+        db.commit()
+        return self.get_brain_telemetry(db)
+
     def run_once(self) -> None:
         """Execute a single heartbeat cycle synchronously."""
         db = self._session_factory()
@@ -371,7 +590,7 @@ class BotRunner:
 
             balances = self.broker.tick_market(db)
 
-            # Track trades closed during this tick (alerts + 3-candle anti-revenge cooldown on losses)
+            # Track trades closed during this tick (TradeManager consecutive losses, circuit breaker & auto-sweep)
             if open_ids_before:
                 newly_closed = (
                     db.query(Trade)
@@ -382,6 +601,7 @@ class BotRunner:
                     .all()
                 )
                 for closed_trade in newly_closed:
+                    self.trade_manager.record_trade_close(db, closed_trade)
                     if float(closed_trade.pnl_usd) < 0.0:
                         self._last_loss_tick[closed_trade.symbol] = self._tick_count
                     self._pending_notifications.append(
@@ -403,6 +623,29 @@ class BotRunner:
                             },
                         )
                     )
+
+            # Smart Trade Manager: +1.0R Breakeven + Fees Shield on surviving open trades
+            symbol_decimals = {sym: int(spec["decimals"]) for sym, spec in SYMBOL_SPECS.items()}
+            be_updates = self.trade_manager.manage_open_trades(
+                db,
+                initial_risks=self._initial_risks,
+                symbol_decimals=symbol_decimals,
+            )
+            if be_updates and self.bybit_router.is_demo_active():
+                for upd in be_updates:
+                    if SYMBOL_SPECS.get(upd.symbol, {}).get("market") == "BYBIT":
+                        try:
+                            self.bybit_router.get_broker().update_stop_loss(
+                                upd.symbol, upd.new_stop_loss
+                            )
+                        except BybitBrokerError as exc:
+                            db.add(
+                                SystemLog(
+                                    level="WARN",
+                                    source="BybitBroker",
+                                    message=f"Breakeven SL sync skipped: {exc}",
+                                )
+                            )
 
             # Lock +1.0R partial scale-out profits, then tighten trailing stops on surviving open trades
             self._apply_partial_scale_outs(db)
@@ -436,43 +679,62 @@ class BotRunner:
                 db.commit()
                 return
 
-            enabled_strategies = {
-                s.name
-                for s in db.query(StrategyConfig).filter(StrategyConfig.enabled.is_(True)).all()
-            }
-
             for symbol, spec in SYMBOL_SPECS.items():
-                htf_df = None
-                if spec["market"] == "BYBIT" and self.bybit_router.is_demo_active():
-                    try:
-                        bybit_broker = self.bybit_router.get_broker()
-                        df = bybit_broker.get_ohlcv(symbol, interval=settings.BYBIT_PRIMARY_INTERVAL, limit=250)
-                        htf_df = bybit_broker.get_ohlcv(symbol, interval=settings.BYBIT_HTF_INTERVAL, limit=100)
-                    except BybitBrokerError as exc:
-                        db.add(SystemLog(level="WARN", source="BybitBroker", message=f"{symbol} feed fallback: {exc}"))
-                        df = self.broker.get_ohlcv(symbol, interval="15m", limit=250)
-                elif spec["market"] == "FOREX" and self.forex_router.is_cloud_active():
-                    try:
-                        fx_broker = self.forex_router.get_broker()
-                        df = fx_broker.get_ohlcv(symbol, interval=settings.FOREX_PRIMARY_INTERVAL, limit=250)
-                        htf_df = fx_broker.get_ohlcv(symbol, interval=settings.FOREX_HTF_INTERVAL, limit=100)
-                    except (OandaBrokerError, DerivBrokerError) as exc:
-                        db.add(SystemLog(level="WARN", source="ForexBroker", message=f"{symbol} feed fallback: {exc}"))
-                        df = self.broker.get_ohlcv(symbol, interval="15m", limit=250)
-                else:
-                    df = self.broker.get_ohlcv(symbol, interval="15m", limit=250)
+                market_upper = str(spec["market"]).upper()
+                market_lower = market_upper.lower()
+                h1_df, h4_df, d1_df = self._fetch_brain_candles(db, symbol, market_upper)
 
-                regime_result, signal = self.dispatcher.evaluate(df, enabled_strategies)
+                # 1. RegimeRouter (zero-repaint mutually exclusive regime classification)
+                regime_decision = self.regime_router.classify(
+                    symbol=symbol,
+                    h1_candles=h1_df,
+                    h4_candles=h4_df,
+                    d1_candles=d1_df,
+                )
 
                 if symbol == "BTCUSDT":
-                    state.active_regime_bybit = regime_result.regime.value
+                    state.active_regime_bybit = regime_decision.state.value
                 elif symbol == "EUR_USD":
-                    state.active_regime_forex = regime_result.regime.value
+                    state.active_regime_forex = regime_decision.state.value
 
-                if signal.action not in {"BUY", "SELL"}:
+                # Active H4/D1 RSI divergence snapshot for telemetry
+                active_div = (
+                    self.rsi_divergence_sniper.detect_active_divergence(d1_df)
+                    if d1_df is not None
+                    else None
+                )
+                if active_div is None:
+                    active_div = self.rsi_divergence_sniper.detect_active_divergence(h4_df)
+
+                # 2. Allowed Strategy evaluation
+                candidate = self._evaluate_brain_strategies(
+                    db=db,
+                    symbol=symbol,
+                    market_lower=market_lower,
+                    regime_decision=regime_decision,
+                    h1_candles=h1_df,
+                    h4_candles=h4_df,
+                    d1_candles=d1_df,
+                )
+
+                symbol_telemetry: dict[str, Any] = {
+                    "symbol": symbol,
+                    "market": market_lower,
+                    "regime": regime_decision.state.value,
+                    "bias": regime_decision.bias,
+                    "allowed_strategies": list(regime_decision.allowed_strategies),
+                    "veto_longs": regime_decision.veto_longs,
+                    "veto_shorts": regime_decision.veto_shorts,
+                    "regime_reason": regime_decision.reason,
+                    "active_divergence": active_div.to_dict() if active_div is not None else None,
+                    "confluence": None,
+                }
+
+                if candidate is None:
+                    self.brain_telemetry[symbol] = symbol_telemetry
                     continue
 
-                if spec["market"] == "FOREX":
+                if market_upper == "FOREX":
                     sess = self.session_guard.evaluate(symbol)
                     self.last_forex_session = sess.to_dict()
                     if not sess.can_trade:
@@ -480,167 +742,157 @@ class BotRunner:
                             SystemLog(
                                 level="INFO",
                                 source="SessionGuard",
-                                message=f"{symbol} {signal.action} paused ({sess.session_name}): {sess.reason}",
+                                message=f"{symbol} {candidate.side} paused ({sess.session_name}): {sess.reason}",
                             )
                         )
+                        self.brain_telemetry[symbol] = symbol_telemetry
                         continue
 
-                conf_result = self.confluence_filter.evaluate(signal, df, htf_df=htf_df)
+                # 3. 0-100 Confluence Evaluator + 6 Hard Veto Gates
+                eval_result = self.confluence_evaluator.evaluate(
+                    candidate,
+                    db=db,
+                    h1_candles=h1_df,
+                    h4_candles=h4_df,
+                    d1_candles=d1_df,
+                    regime_decision=regime_decision,
+                    active_divergence=active_div,
+                )
+                symbol_telemetry["confluence"] = eval_result.to_dict()
+                self.brain_telemetry[symbol] = symbol_telemetry
                 self.last_confluence = {
                     "symbol": symbol,
-                    "score": conf_result.score,
-                    "htf_bias": conf_result.htf_bias,
-                    "vwap_aligned": conf_result.vwap_aligned,
-                    "volume_ratio": conf_result.volume_ratio,
-                    "passed": conf_result.passed,
-                    "reasons": conf_result.reasons,
+                    "score": eval_result.total_score,
+                    "htf_bias": regime_decision.bias,
+                    "vwap_aligned": eval_result.breakdown.level_precision >= 25,
+                    "volume_ratio": eval_result.telemetry.get("volume_ratio") or 1.0,
+                    "passed": eval_result.approved,
+                    "reasons": [eval_result.details],
+                    "breakdown": eval_result.breakdown.to_dict(),
+                    "vetoes": list(eval_result.vetoes),
                 }
                 db.add(
                     SystemLog(
-                        level="INFO",
-                        source="ConfluenceFilter",
+                        level="INFO" if eval_result.approved else "WARN",
+                        source="ConfluenceEvaluator",
                         message=(
-                            f"{symbol} {signal.action} Confluence {conf_result.score}/100 "
-                            f"({'PASSED' if conf_result.passed else 'BLOCKED'}): "
-                            f"{' | '.join(conf_result.reasons)}"
+                            f"{symbol} {candidate.strategy} {candidate.side} "
+                            f"{eval_result.total_score}/100 "
+                            f"({'APPROVED' if eval_result.approved else 'VETOED'}): "
+                            f"{eval_result.details}"
                         ),
                     )
                 )
-                if not conf_result.passed:
+                if not eval_result.approved:
                     continue
 
-                open_positions = self.broker.get_open_positions(db=db)
-                candles_since_loss = (
-                    self._tick_count - self._last_loss_tick[symbol]
-                    if symbol in self._last_loss_tick
-                    else None
-                )
-                market_wallet = self.broker.get_wallet_account(db, spec["market"])
-                active_balance_only = float(market_wallet.active_balance)
+                # 4. Realism Sizing & Execution
+                market_wallet = self.broker.get_wallet_account(db, market_upper)
+                decimals = int(spec["decimals"])
+                order_side = candidate.side
+                final_qty = 0.0
 
-                decision = self.risk_manager.approve_trade(
-                    side=signal.action,
-                    symbol=symbol,
-                    entry_price=signal.entry_price,
-                    stop_loss=signal.stop_loss,
-                    take_profit=signal.take_profit,
-                    equity=active_balance_only,
-                    daily_pnl_pct=daily_pnl_pct,
-                    open_positions=open_positions,
-                    candles_since_last_loss=candles_since_loss,
-                )
-
-                if decision.trigger_kill_switch:
-                    self.broker.log_execution_rejection(
+                if market_wallet.realism_enabled:
+                    sizing = self.broker.size_and_validate_order(
                         db=db,
-                        market=spec["market"],
-                        symbol=symbol,
-                        side="LONG" if signal.action == "BUY" else "SHORT",
-                        reason_code="DAILY_LOSS_LOCKED",
-                        requested_qty=0,
-                        required_min_qty=0,
-                        required_margin=0,
-                        available_free_margin=market_wallet.active_balance,
-                        details=decision.rejection_reason or "Daily loss limit breached.",
-                    )
-                    self._engage_kill_switch(
-                        db,
-                        state,
-                        decision.rejection_reason or "RiskManager triggered Kill Switch.",
-                    )
-                    db.commit()
-                    return
-
-                if decision.approved:
-                    decimals = int(spec["decimals"])
-                    order_side = "LONG" if signal.action == "BUY" else "SHORT"
-                    final_qty = round(decision.qty, 6)
-
-                    if market_wallet.realism_enabled:
-                        sizing = self.broker.size_and_validate_order(
-                            db=db,
-                            symbol=symbol,
-                            side=order_side,
-                            entry_price=signal.entry_price,
-                            stop_loss=signal.stop_loss,
-                            max_risk_per_trade_pct=self.risk_manager.max_risk_per_trade_pct,
-                            order_entry_type="MARKET",
-                            strategy=signal.strategy_name,
-                            confluence_score=conf_result.score,
-                        )
-                        if not sizing.approved:
-                            db.add(
-                                SystemLog(
-                                    level="WARN",
-                                    source="RealismEngine",
-                                    message=(
-                                        f"Order rejected for {symbol} ({order_side}) "
-                                        f"[{sizing.reason_code}]: {sizing.details}"
-                                    ),
-                                )
-                            )
-                            continue
-                        final_qty = float(sizing.qty)
-
-                    if spec["market"] == "BYBIT" and self.bybit_router.is_demo_active():
-                        try:
-                            self.bybit_router.get_broker().place_order(
-                                symbol=symbol,
-                                side=order_side,
-                                qty=final_qty,
-                                stop_loss=round(signal.stop_loss, decimals),
-                                take_profit=round(signal.take_profit, decimals),
-                                strategy_name=signal.strategy_name,
-                                reason=f"{signal.reason} [Confluence {conf_result.score}/100]",
-                                entry_price_ref=signal.entry_price,
-                            )
-                        except BybitBrokerError as exc:
-                            db.add(SystemLog(level="ERROR", source="BybitBroker", message=f"Order rejected: {exc}"))
-                            continue
-                    elif spec["market"] == "FOREX" and self.forex_router.is_cloud_active():
-                        try:
-                            self.forex_router.get_broker().place_order(
-                                symbol=symbol,
-                                side=order_side,
-                                qty=final_qty,
-                                stop_loss=round(signal.stop_loss, decimals),
-                                take_profit=round(signal.take_profit, decimals),
-                                strategy_name=signal.strategy_name,
-                                reason=f"{signal.reason} [Confluence {conf_result.score}/100]",
-                            )
-                        except (OandaBrokerError, DerivBrokerError) as exc:
-                            db.add(SystemLog(level="ERROR", source="ForexBroker", message=f"Order rejected: {exc}"))
-                            continue
-
-                    created = self.broker.place_order(
                         symbol=symbol,
                         side=order_side,
-                        qty=final_qty,
-                        stop_loss=round(signal.stop_loss, decimals),
-                        take_profit=round(signal.take_profit, decimals),
-                        strategy_name=signal.strategy_name,
-                        reason=f"{signal.reason} [Confluence {conf_result.score}/100]",
-                        db=db,
+                        entry_price=candidate.entry_price,
+                        stop_loss=candidate.sl_price,
+                        max_risk_per_trade_pct=self.risk_manager.max_risk_per_trade_pct,
+                        order_entry_type=candidate.order_entry_type,
+                        strategy=candidate.strategy,
+                        confluence_score=eval_result.total_score,
                     )
-                    self._initial_risks[created["id"]] = abs(
-                        float(created["entry_price"]) - float(created["stop_loss"])
-                    )
-                    self._pending_notifications.append(
-                        (
-                            "notify_trade_opened",
-                            {
-                                "symbol": symbol,
-                                "side": order_side,
-                                "market": spec["market"],
-                                "qty": final_qty,
-                                "entry_price": float(created["entry_price"]),
-                                "stop_loss": round(signal.stop_loss, decimals),
-                                "take_profit": round(signal.take_profit, decimals),
-                                "strategy_name": signal.strategy_name,
-                                "reason": f"{signal.reason} [Confluence {conf_result.score}/100]",
-                            },
+                    if not sizing.approved:
+                        db.add(
+                            SystemLog(
+                                level="WARN",
+                                source="RealismEngine",
+                                message=(
+                                    f"Order rejected for {symbol} ({order_side}) "
+                                    f"[{sizing.reason_code}]: {sizing.details}"
+                                ),
+                            )
                         )
+                        continue
+                    final_qty = float(sizing.qty)
+                else:
+                    open_positions = self.broker.get_open_positions(db=db)
+                    decision = self.risk_manager.approve_trade(
+                        side="BUY" if order_side == "LONG" else "SELL",
+                        symbol=symbol,
+                        entry_price=candidate.entry_price,
+                        stop_loss=candidate.sl_price,
+                        take_profit=candidate.tp_price,
+                        equity=float(market_wallet.active_balance),
+                        daily_pnl_pct=daily_pnl_pct,
+                        open_positions=open_positions,
                     )
+                    if not decision.approved:
+                        continue
+                    final_qty = round(decision.qty, 6)
+
+                if market_upper == "BYBIT" and self.bybit_router.is_demo_active():
+                    try:
+                        self.bybit_router.get_broker().place_order(
+                            symbol=symbol,
+                            side=order_side,
+                            qty=final_qty,
+                            stop_loss=round(candidate.sl_price, decimals),
+                            take_profit=round(candidate.tp_price, decimals),
+                            strategy_name=candidate.strategy,
+                            reason=f"{candidate.reason} [Confluence {eval_result.total_score}/100]",
+                            entry_price_ref=candidate.entry_price,
+                        )
+                    except BybitBrokerError as exc:
+                        db.add(SystemLog(level="ERROR", source="BybitBroker", message=f"Order rejected: {exc}"))
+                        continue
+                elif market_upper == "FOREX" and self.forex_router.is_cloud_active():
+                    try:
+                        self.forex_router.get_broker().place_order(
+                            symbol=symbol,
+                            side=order_side,
+                            qty=final_qty,
+                            stop_loss=round(candidate.sl_price, decimals),
+                            take_profit=round(candidate.tp_price, decimals),
+                            strategy_name=candidate.strategy,
+                            reason=f"{candidate.reason} [Confluence {eval_result.total_score}/100]",
+                        )
+                    except (OandaBrokerError, DerivBrokerError) as exc:
+                        db.add(SystemLog(level="ERROR", source="ForexBroker", message=f"Order rejected: {exc}"))
+                        continue
+
+                created = self.broker.place_order(
+                    symbol=symbol,
+                    side=order_side,
+                    qty=final_qty,
+                    stop_loss=round(candidate.sl_price, decimals),
+                    take_profit=round(candidate.tp_price, decimals),
+                    strategy_name=candidate.strategy,
+                    reason=f"{candidate.reason} [Confluence {eval_result.total_score}/100]",
+                    db=db,
+                    order_entry_type=candidate.order_entry_type,
+                )
+                self._initial_risks[created["id"]] = abs(
+                    float(created["entry_price"]) - float(created["stop_loss"])
+                )
+                self._pending_notifications.append(
+                    (
+                        "notify_trade_opened",
+                        {
+                            "symbol": symbol,
+                            "side": order_side,
+                            "market": market_upper,
+                            "qty": final_qty,
+                            "entry_price": float(created["entry_price"]),
+                            "stop_loss": round(candidate.sl_price, decimals),
+                            "take_profit": round(candidate.tp_price, decimals),
+                            "strategy_name": candidate.strategy,
+                            "reason": f"{candidate.reason} [Confluence {eval_result.total_score}/100]",
+                        },
+                    )
+                )
 
             db.commit()
         finally:

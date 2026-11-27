@@ -460,7 +460,9 @@ def test_paper_sim_ohlcv_and_bot_runner_persist_regimes(tmp_path: Path) -> None:
     assert len(df2) == 250
     assert df2["timestamp"].iloc[-1] > df1["timestamp"].iloc[-1]
 
-    valid_regimes = {r.value for r in MarketRegime}
+    from app.services.regime_router import RegimeState
+
+    valid_regimes = {r.value for r in MarketRegime} | {r.value for r in RegimeState}
     db = session_factory()
     try:
         state = db.query(BotState).first()
