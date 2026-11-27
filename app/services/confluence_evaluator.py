@@ -78,6 +78,9 @@ class BrainConfig:
     ema_50_pullback_enabled: bool = True
     breakout_retest_enabled: bool = True
     rsi_divergence_sniper_enabled: bool = True
+    trend_rider_enabled: bool = True
+    mean_reversion_enabled: bool = True
+    volatility_breakout_enabled: bool = True
     min_confluence_score: int = 75
     max_fee_drag_pct: float = 15.0
     min_net_rr: float = 1.85
@@ -96,6 +99,12 @@ class BrainConfig:
             return bool(self.breakout_retest_enabled)
         if name == "RSI_DIVERGENCE_SNIPER":
             return bool(self.rsi_divergence_sniper_enabled)
+        if name == "TREND_RIDER":
+            return bool(self.trend_rider_enabled)
+        if name in {"MEAN_REVERSION", "RANGE_MEAN_REVERSION"}:
+            return bool(self.mean_reversion_enabled)
+        if name == "VOLATILITY_BREAKOUT":
+            return bool(self.volatility_breakout_enabled)
         return True
 
     def to_dict(self) -> dict[str, Any]:
@@ -103,6 +112,9 @@ class BrainConfig:
             "ema_50_pullback_enabled": self.ema_50_pullback_enabled,
             "breakout_retest_enabled": self.breakout_retest_enabled,
             "rsi_divergence_sniper_enabled": self.rsi_divergence_sniper_enabled,
+            "trend_rider_enabled": self.trend_rider_enabled,
+            "mean_reversion_enabled": self.mean_reversion_enabled,
+            "volatility_breakout_enabled": self.volatility_breakout_enabled,
             "min_confluence_score": self.min_confluence_score,
             "max_fee_drag_pct": self.max_fee_drag_pct,
             "min_net_rr": self.min_net_rr,
@@ -450,8 +462,10 @@ class ConfluenceEvaluator:
                 strategy=signal.strategy,
                 confluence_score=Decimal(str(total_score)),
                 reason_code=primary_veto,
-                requested_qty=q6(friction_qty),
-                available_free_margin=q6(resolved_active_balance),
+                requested_qty=q6(friction_qty) if friction_qty is not None else Decimal("0.00000000"),
+                required_min_qty=Decimal("0.00000000"),
+                required_margin=Decimal("0.000000"),
+                available_free_margin=q6(resolved_active_balance) if resolved_active_balance is not None else Decimal("0.000000"),
                 details=details,
             )
             db.add(rejection)

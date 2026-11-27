@@ -195,6 +195,13 @@ class ExecutionRejection(Base):
         DateTime(timezone=True), index=True, default=utcnow
     )
 
+    def __init__(self, **kwargs: object) -> None:
+        kwargs.setdefault("requested_qty", Decimal("0.00000000"))
+        kwargs.setdefault("required_min_qty", Decimal("0.00000000"))
+        kwargs.setdefault("required_margin", Decimal("0.000000"))
+        kwargs.setdefault("available_free_margin", Decimal("0.000000"))
+        super().__init__(**kwargs)
+
 
 class ArmedRetestSetup(Base):
     """Persisted state for Breakout + Retest setups across container restarts."""

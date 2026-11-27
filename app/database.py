@@ -100,6 +100,74 @@ def _q6(value: Decimal) -> Decimal:
     return value.quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP)
 
 
+def _migrate_execution_rejections_defaults(conn) -> None:
+    """Idempotently rebuild legacy SQLite execution_rejections if qty/margin columns are NOT NULL without default."""
+    rows = conn.execute(text("PRAGMA table_info(execution_rejections)")).fetchall()
+    if not rows:
+        return
+    # PRAGMA table_info columns: (cid, name, type, notnull, dflt_value, pk)
+    guarded = {"requested_qty", "required_min_qty", "required_margin", "available_free_margin"}
+    needs_rebuild = any(
+        str(row[1]) in guarded and int(row[3]) == 1 and row[4] is None
+        for row in rows
+    )
+    if not needs_rebuild:
+        return
+
+    existing_cols = {str(row[1]) for row in rows}
+    conn.execute(
+        text(
+            """
+            CREATE TABLE execution_rejections__migrated (
+                id INTEGER NOT NULL PRIMARY KEY,
+                market VARCHAR(16) NOT NULL,
+                symbol VARCHAR(32) NOT NULL,
+                side VARCHAR(16) NOT NULL,
+                strategy VARCHAR(48),
+                confluence_score NUMERIC(6, 2),
+                reason_code VARCHAR(48) NOT NULL,
+                requested_qty NUMERIC(18, 8) DEFAULT 0,
+                required_min_qty NUMERIC(18, 8) DEFAULT 0,
+                required_margin NUMERIC(18, 6) DEFAULT 0,
+                available_free_margin NUMERIC(18, 6) DEFAULT 0,
+                details TEXT NOT NULL DEFAULT '',
+                created_at DATETIME NOT NULL
+            )
+            """
+        )
+    )
+    strategy_expr = "strategy" if "strategy" in existing_cols else "NULL"
+    score_expr = "confluence_score" if "confluence_score" in existing_cols else "NULL"
+    conn.execute(
+        text(
+            f"""
+            INSERT INTO execution_rejections__migrated (
+                id, market, symbol, side, strategy, confluence_score,
+                reason_code, requested_qty, required_min_qty,
+                required_margin, available_free_margin, details, created_at
+            )
+            SELECT
+                id, market, symbol, side, {strategy_expr}, {score_expr},
+                reason_code,
+                COALESCE(requested_qty, 0),
+                COALESCE(required_min_qty, 0),
+                COALESCE(required_margin, 0),
+                COALESCE(available_free_margin, 0),
+                COALESCE(details, ''),
+                created_at
+            FROM execution_rejections
+            """
+        )
+    )
+    conn.execute(text("DROP TABLE execution_rejections"))
+    conn.execute(text("ALTER TABLE execution_rejections__migrated RENAME TO execution_rejections"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_execution_rejections_id ON execution_rejections (id)"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_execution_rejections_market ON execution_rejections (market)"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_execution_rejections_symbol ON execution_rejections (symbol)"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_execution_rejections_reason_code ON execution_rejections (reason_code)"))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_execution_rejections_created_at ON execution_rejections (created_at)"))
+
+
 def migrate_sqlite_schema(target_engine: Engine) -> None:
     """Idempotently add missing columns to existing SQLite tables."""
     if target_engine.dialect.name != "sqlite":
@@ -116,6 +184,7 @@ def migrate_sqlite_schema(target_engine: Engine) -> None:
                     conn.execute(
                         text(f"ALTER TABLE {table_name} ADD COLUMN {col_name} {sqlite_def}")
                     )
+        _migrate_execution_rejections_defaults(conn)
 
 
 def migrate_schema(target_engine: Engine) -> None:

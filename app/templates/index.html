@@ -747,8 +747,14 @@
         <section class="grid grid-cols-1 lg:grid-cols-12 gap-3.5 sm:gap-4">
           <div class="glass-card rounded-2xl p-4 lg:col-span-6">
             <div class="flex items-center justify-between gap-2 mb-3">
-              <h2 class="text-sm font-semibold text-white">Open Positions</h2>
-              <span id="open-count" class="text-[11px] font-mono px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 tabular-nums">0 OPEN</span>
+              <div class="flex items-center gap-2 min-w-0">
+                <h2 class="text-sm font-semibold text-white truncate">Open Positions</h2>
+                <span id="open-count" class="text-[11px] font-mono px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 tabular-nums shrink-0">0 OPEN</span>
+              </div>
+              <button type="button" id="btn-close-all" onclick="confirmCloseAllPositions()" disabled class="hidden inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-mono font-bold bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/35 transition disabled:opacity-40 disabled:cursor-not-allowed shrink-0" title="Close all open positions at live mark price">
+                <span>×</span>
+                <span>Close All</span>
+              </button>
             </div>
             <div id="open-positions-list" class="space-y-2.5">
               <!-- Populated by JS -->
@@ -766,48 +772,81 @@
           </div>
         </section>
 
-        <!-- Strategy Control Board (Bottom of Live Terminal — Wired to PATCH /api/brain/config) -->
+        <!-- Strategy Control Board (Bottom of Live Terminal — Unified 6-Strategy Router) -->
         <section class="glass-card rounded-2xl p-4 space-y-3.5">
           <div class="flex flex-wrap items-center justify-between gap-2">
             <div class="min-w-0">
               <h2 class="text-sm font-semibold text-white">Strategy Control Board</h2>
-              <p class="text-[11px] text-zinc-400">Strategy Brain toggles &amp; live confluence/veto thresholds</p>
+              <p class="text-[11px] text-zinc-400">Unified 6-Strategy Regime Router · Auto-selects highest-confluence eligible strategy</p>
             </div>
             <span id="brain-cfg-status" class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-white/[0.05] text-zinc-400 border border-white/[0.08] shrink-0">SYNCED</span>
           </div>
 
-          <!-- 3 Strategy Brain ON/OFF Toggles -->
-          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <!-- 50 EMA Pullback (Trend) -->
+          <!-- 6 Unified Strategy ON/OFF Toggles -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            <!-- 1. 50 EMA Pullback (Trend) -->
             <div class="glass-subcard rounded-xl p-3 flex items-center justify-between gap-2.5">
               <div class="min-w-0">
                 <p class="text-xs font-semibold text-white truncate">50 EMA Pullback</p>
-                <p class="text-[10px] font-mono text-emerald-300/80 truncate">Trend · H4/H1 Pullback</p>
+                <p class="text-[10px] font-mono text-emerald-300/80 truncate">Trending · H4/H1 Pullback</p>
               </div>
               <button type="button" id="toggle-brain-ema" onclick="toggleBrainStrategy('ema_50_pullback_enabled')" aria-label="Toggle 50 EMA Pullback" class="relative inline-flex h-6 w-11 shrink-0 items-center rounded-full bg-emerald-500/80 transition focus:outline-none">
                 <span id="knob-brain-ema" class="inline-block h-4 w-4 transform rounded-full bg-white transition translate-x-6"></span>
               </button>
             </div>
 
-            <!-- H1/H4 Breakout + Retest (Expansion) -->
+            <!-- 2. Trend Rider (Trend) -->
+            <div class="glass-subcard rounded-xl p-3 flex items-center justify-between gap-2.5">
+              <div class="min-w-0">
+                <p class="text-xs font-semibold text-white truncate">Trend Rider</p>
+                <p class="text-[10px] font-mono text-emerald-300/80 truncate">Trending · EMA Momentum</p>
+              </div>
+              <button type="button" id="toggle-brain-trend-rider" onclick="toggleBrainStrategy('trend_rider_enabled')" aria-label="Toggle Trend Rider" class="relative inline-flex h-6 w-11 shrink-0 items-center rounded-full bg-emerald-500/80 transition focus:outline-none">
+                <span id="knob-brain-trend-rider" class="inline-block h-4 w-4 transform rounded-full bg-white transition translate-x-6"></span>
+              </button>
+            </div>
+
+            <!-- 3. H1/H4 Breakout + Retest (Expansion) -->
             <div class="glass-subcard rounded-xl p-3 flex items-center justify-between gap-2.5">
               <div class="min-w-0">
                 <p class="text-xs font-semibold text-white truncate">H1/H4 Breakout + Retest</p>
-                <p class="text-[10px] font-mono text-sky-300/80 truncate">Expansion · Stateful Zone</p>
+                <p class="text-[10px] font-mono text-sky-300/80 truncate">Breakout · Stateful Zone</p>
               </div>
               <button type="button" id="toggle-brain-breakout" onclick="toggleBrainStrategy('breakout_retest_enabled')" aria-label="Toggle Breakout + Retest" class="relative inline-flex h-6 w-11 shrink-0 items-center rounded-full bg-emerald-500/80 transition focus:outline-none">
                 <span id="knob-brain-breakout" class="inline-block h-4 w-4 transform rounded-full bg-white transition translate-x-6"></span>
               </button>
             </div>
 
-            <!-- H4/D1 RSI 14 Divergence (Sniper + Veto) -->
+            <!-- 4. Volatility Breakout (Breakout / High Vol) -->
+            <div class="glass-subcard rounded-xl p-3 flex items-center justify-between gap-2.5">
+              <div class="min-w-0">
+                <p class="text-xs font-semibold text-white truncate">Volatility Breakout</p>
+                <p class="text-[10px] font-mono text-sky-300/80 truncate">Breakout · Donchian ATR</p>
+              </div>
+              <button type="button" id="toggle-brain-vol-breakout" onclick="toggleBrainStrategy('volatility_breakout_enabled')" aria-label="Toggle Volatility Breakout" class="relative inline-flex h-6 w-11 shrink-0 items-center rounded-full bg-emerald-500/80 transition focus:outline-none">
+                <span id="knob-brain-vol-breakout" class="inline-block h-4 w-4 transform rounded-full bg-white transition translate-x-6"></span>
+              </button>
+            </div>
+
+            <!-- 5. H4/D1 RSI 14 Divergence (Range / Exhaustion) -->
             <div class="glass-subcard rounded-xl p-3 flex items-center justify-between gap-2.5">
               <div class="min-w-0">
                 <p class="text-xs font-semibold text-white truncate">H4/D1 RSI 14 Divergence</p>
-                <p class="text-[10px] font-mono text-amber-300/80 truncate">Sniper + Hard Veto</p>
+                <p class="text-[10px] font-mono text-amber-300/80 truncate">Exhaustion · Sniper + Veto</p>
               </div>
               <button type="button" id="toggle-brain-rsi" onclick="toggleBrainStrategy('rsi_divergence_sniper_enabled')" aria-label="Toggle RSI 14 Divergence" class="relative inline-flex h-6 w-11 shrink-0 items-center rounded-full bg-emerald-500/80 transition focus:outline-none">
                 <span id="knob-brain-rsi" class="inline-block h-4 w-4 transform rounded-full bg-white transition translate-x-6"></span>
+              </button>
+            </div>
+
+            <!-- 6. Mean Reversion (Range / Exhaustion) -->
+            <div class="glass-subcard rounded-xl p-3 flex items-center justify-between gap-2.5">
+              <div class="min-w-0">
+                <p class="text-xs font-semibold text-white truncate">Mean Reversion</p>
+                <p class="text-[10px] font-mono text-amber-300/80 truncate">Range · BB + RSI Fade</p>
+              </div>
+              <button type="button" id="toggle-brain-mean-rev" onclick="toggleBrainStrategy('mean_reversion_enabled')" aria-label="Toggle Mean Reversion" class="relative inline-flex h-6 w-11 shrink-0 items-center rounded-full bg-emerald-500/80 transition focus:outline-none">
+                <span id="knob-brain-mean-rev" class="inline-block h-4 w-4 transform rounded-full bg-white transition translate-x-6"></span>
               </button>
             </div>
           </div>
@@ -2320,6 +2359,10 @@
         </div>
       ` : '';
 
+      const closeBtnHtml = isOpen
+        ? `<button type="button" id="btn-close-pos-${Number(t.id)}" onclick="closeSinglePosition(${Number(t.id)}, '${escapeHtml(t.symbol)}', '${escapeHtml(t.side)}')" title="Close ${escapeHtml(t.symbol)} at live mark price" class="ml-1 inline-flex items-center justify-center h-6 px-2 rounded-md text-[11px] font-mono font-bold bg-rose-500/15 hover:bg-rose-500/30 text-rose-300 border border-rose-500/35 transition shrink-0">× Close</button>`
+        : '';
+
       return `
         <div class="glass-subcard rounded-xl p-3">
           <div class="flex items-center justify-between gap-2">
@@ -2329,15 +2372,18 @@
               <span class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-white/[0.06] text-zinc-400">${escapeHtml(t.market)}</span>
               ${exitTagHtml}
             </div>
-            <div class="text-right font-mono tabular-nums shrink-0">
-              <span class="text-sm font-bold ${pnlColor}">${fmtSignedUsd(netVal)}</span>
-              <span class="text-[11px] ${pnlColor} ml-1">(${t.pnl_pct >= 0 ? '+' : ''}${Number(t.pnl_pct || 0).toFixed(2)}%)</span>
+            <div class="flex items-center gap-1.5 text-right font-mono tabular-nums shrink-0">
+              <div>
+                <span class="text-sm font-bold ${pnlColor}">${fmtSignedUsd(netVal)}</span>
+                <span class="text-[11px] ${pnlColor} ml-1">(${t.pnl_pct >= 0 ? '+' : ''}${Number(t.pnl_pct || 0).toFixed(2)}%)</span>
+              </div>
+              ${closeBtnHtml}
             </div>
           </div>
           <div class="mt-2 grid grid-cols-3 gap-2 text-[11px] font-mono text-zinc-400 tabular-nums">
             <div class="truncate">Entry: <span class="text-zinc-200">${fmtPrice(t.entry_price, t.symbol)}</span></div>
             <div class="truncate">${priceLabel}: <span class="text-zinc-200">${fmtPrice(priceValue, t.symbol)}</span></div>
-            <div class="text-right text-zinc-400 truncate">${escapeHtml(t.strategy_name)}</div>
+            <div class="text-right text-zinc-400 truncate">${escapeHtml(formatBrainStrategyName(t.strategy_name))}</div>
           </div>
           <div class="mt-1 flex items-center justify-between text-[10px] font-mono text-zinc-500 tabular-nums">
             <span>SL: ${fmtPrice(t.stop_loss, t.symbol)}</span>
@@ -2350,17 +2396,30 @@
     }
 
     function renderTrades(openPositions, closedTrades) {
-      document.getElementById('open-count').textContent = `${openPositions.length} OPEN`;
-      document.getElementById('closed-count').textContent = `${closedTrades.length} CLOSED`;
+      const openList = Array.isArray(openPositions) ? openPositions : [];
+      const closedList = Array.isArray(closedTrades) ? closedTrades : [];
+      document.getElementById('open-count').textContent = `${openList.length} OPEN`;
+      document.getElementById('closed-count').textContent = `${closedList.length} CLOSED`;
+
+      const closeAllBtn = document.getElementById('btn-close-all');
+      if (closeAllBtn) {
+        if (openList.length > 0) {
+          closeAllBtn.classList.remove('hidden');
+          closeAllBtn.disabled = false;
+        } else {
+          closeAllBtn.classList.add('hidden');
+          closeAllBtn.disabled = true;
+        }
+      }
 
       const openEl = document.getElementById('open-positions-list');
-      openEl.innerHTML = openPositions.length
-        ? openPositions.map((t) => renderTradeCard(t, true)).join('')
+      openEl.innerHTML = openList.length
+        ? openList.map((t) => renderTradeCard(t, true)).join('')
         : '<div class="text-xs text-zinc-500 py-6 text-center">No open positions in this market.</div>';
 
       const closedEl = document.getElementById('closed-trades-list');
-      closedEl.innerHTML = closedTrades.length
-        ? closedTrades.map((t) => renderTradeCard(t, false)).join('')
+      closedEl.innerHTML = closedList.length
+        ? closedList.map((t) => renderTradeCard(t, false)).join('')
         : '<div class="text-xs text-zinc-500 py-6 text-center">No closed trades recorded yet.</div>';
     }
 
@@ -3804,11 +3863,90 @@
 
     function formatBrainStrategyName(raw) {
       const key = String(raw || '').toUpperCase();
-      if (key === 'EMA_50_PULLBACK') return 'EMA 50 Pullback';
+      if (key === 'EMA_50_PULLBACK') return '50 EMA Pullback';
+      if (key === 'TREND_RIDER') return 'Trend Rider';
       if (key === 'BREAKOUT_RETEST') return 'Breakout + Retest';
-      if (key === 'RSI_DIVERGENCE_SNIPER') return 'RSI Divergence Sniper';
+      if (key === 'VOLATILITY_BREAKOUT') return 'Volatility Breakout';
+      if (key === 'RSI_DIVERGENCE_SNIPER') return 'RSI 14 Divergence';
+      if (key === 'MEAN_REVERSION' || key === 'RANGE_MEAN_REVERSION') return 'Mean Reversion';
       if (!raw) return 'Cash / Standby';
       return String(raw).replace(/_/g, ' ');
+    }
+
+    async function closeSinglePosition(positionId, symbol, side) {
+      if (!positionId) return;
+      const ok = window.confirm(`Close ${side} ${symbol} (#${positionId}) at live market price?`);
+      if (!ok) return;
+      const btn = document.getElementById(`btn-close-pos-${positionId}`);
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = '...';
+      }
+      try {
+        const res = await fetch(`/api/positions/${encodeURIComponent(positionId)}/close`, {
+          method: 'POST',
+        });
+        if (res.status === 401) { handleAuthExpired(); return; }
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          showWalletToast(body.detail || `Failed to close position #${positionId}.`, 'error');
+          if (btn) { btn.disabled = false; btn.textContent = '× Close'; }
+          return;
+        }
+        if (body.wallet) {
+          lastWalletSummary = body.wallet;
+          applyWalletHeaderPills(body.wallet);
+        }
+        await Promise.all([
+          fetchDashboard(),
+          fetchWalletAll(),
+          fetchBrainTelemetry(),
+          fetchLiveChart(),
+        ]);
+      } catch (err) {
+        console.error('Close position error:', err);
+        if (btn) { btn.disabled = false; btn.textContent = '× Close'; }
+      }
+    }
+
+    async function confirmCloseAllPositions() {
+      const scopeLabel = currentMarket === 'ALL' ? 'ALL open positions across Bybit & Forex' : `all open ${currentMarket} positions`;
+      const ok = window.confirm(`Close ${scopeLabel} at live market price?`);
+      if (!ok) return;
+      const btn = document.getElementById('btn-close-all');
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Closing...';
+      }
+      try {
+        const res = await fetch('/api/positions/close-all', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ market: currentMarket }),
+        });
+        if (res.status === 401) { handleAuthExpired(); return; }
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          showWalletToast(body.detail || 'Failed to close all positions.', 'error');
+          return;
+        }
+        if (body.wallet) {
+          lastWalletSummary = body.wallet;
+          applyWalletHeaderPills(body.wallet);
+        }
+        await Promise.all([
+          fetchDashboard(),
+          fetchWalletAll(),
+          fetchBrainTelemetry(),
+          fetchLiveChart(),
+        ]);
+      } catch (err) {
+        console.error('Close all positions error:', err);
+      } finally {
+        if (btn) {
+          btn.innerHTML = '<span>×</span><span>Close All</span>';
+        }
+      }
     }
 
     function formatBrainRegimeBadge(regimeRaw) {
@@ -4003,8 +4141,11 @@
         }
       };
       setToggle('toggle-brain-ema', 'knob-brain-ema', Boolean(cfg.ema_50_pullback_enabled));
+      setToggle('toggle-brain-trend-rider', 'knob-brain-trend-rider', cfg.trend_rider_enabled !== false);
       setToggle('toggle-brain-breakout', 'knob-brain-breakout', Boolean(cfg.breakout_retest_enabled));
+      setToggle('toggle-brain-vol-breakout', 'knob-brain-vol-breakout', cfg.volatility_breakout_enabled !== false);
       setToggle('toggle-brain-rsi', 'knob-brain-rsi', Boolean(cfg.rsi_divergence_sniper_enabled));
+      setToggle('toggle-brain-mean-rev', 'knob-brain-mean-rev', cfg.mean_reversion_enabled !== false);
 
       const setInputIfIdle = (id, val) => {
         const el = document.getElementById(id);
@@ -4057,8 +4198,20 @@
 
       const stratPill = document.getElementById('kpi-active-strategy');
       if (stratPill) {
-        const allowed = symSnap && Array.isArray(symSnap.allowed_strategies) ? symSnap.allowed_strategies : [];
-        stratPill.textContent = allowed.length ? allowed.map(formatBrainStrategyName).join(' · ') : 'Cash / Standby';
+        const selected = symSnap && symSnap.selected_strategy ? symSnap.selected_strategy : null;
+        const eligible = symSnap && Array.isArray(symSnap.eligible_strategies)
+          ? symSnap.eligible_strategies
+          : (symSnap && Array.isArray(symSnap.allowed_strategies) ? symSnap.allowed_strategies : []);
+        if (selected) {
+          stratPill.textContent = `★ ${formatBrainStrategyName(selected)}`;
+          stratPill.className = 'inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/35 truncate';
+        } else if (eligible.length) {
+          stratPill.textContent = eligible.map(formatBrainStrategyName).join(' · ');
+          stratPill.className = 'inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-mono font-semibold bg-white/[0.05] text-zinc-300 border border-white/[0.08] truncate';
+        } else {
+          stratPill.textContent = 'Cash / Standby';
+          stratPill.className = 'inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-mono font-semibold bg-white/[0.05] text-zinc-400 border border-white/[0.08] truncate';
+        }
       }
 
       // 2. Confluence Radar Card ("Stockfish Eval")

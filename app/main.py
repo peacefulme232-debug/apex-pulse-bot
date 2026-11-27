@@ -132,12 +132,22 @@ class BrainConfigPatchRequest(BaseModel):
     ema_50_pullback_enabled: Optional[bool] = None
     breakout_retest_enabled: Optional[bool] = None
     rsi_divergence_sniper_enabled: Optional[bool] = None
+    trend_rider_enabled: Optional[bool] = None
+    mean_reversion_enabled: Optional[bool] = None
+    volatility_breakout_enabled: Optional[bool] = None
     min_confluence_score: Optional[int] = Field(default=None, ge=65, le=90)
     max_fee_drag_pct: Optional[float] = Field(default=None, gt=0.0, le=50.0)
     breakeven_r_trigger: Optional[float] = Field(default=None, ge=0.5, le=5.0)
     max_consecutive_losses: Optional[int] = Field(default=None, ge=1, le=10)
     micro_shield_enabled: Optional[bool] = None
     reset_circuit_breaker: Optional[bool] = None
+
+
+class CloseAllPositionsRequest(BaseModel):
+    """Optional payload for MT5-style Close All positions endpoint."""
+
+    market: Optional[Literal["all", "bybit", "forex", "ALL", "BYBIT", "FOREX"]] = None
+    reason: Optional[str] = Field(default=None, max_length=256)
 
 
 class WalkForwardRequest(BaseModel):
@@ -974,6 +984,105 @@ def create_app(database_url: Optional[str] = None) -> FastAPI:
             return result.to_dict()
 
         return await asyncio.to_thread(_execute_walk_forward)
+
+    # ------------------------------------------------------------------
+    # MT5-Style Manual Close & Close All Position Endpoints
+    # ------------------------------------------------------------------
+
+    @fastapi_app.post("/api/positions/close-all", dependencies=[Depends(require_dashboard_auth)])
+    def close_all_positions(
+        market: Optional[Literal["all", "bybit", "forex", "ALL", "BYBIT", "FOREX"]] = Query(default=None),
+        payload: Optional[CloseAllPositionsRequest] = Body(default=None),
+        db: Session = Depends(db_dependency),
+    ) -> dict[str, Any]:
+        """Close all OPEN paper positions (optionally filtered by market) at live mark price through the Realism Engine."""
+        _ensure_bot_state(db, broker)
+        resolved_market = (
+            (payload.market if payload and payload.market else market) or "ALL"
+        ).strip().upper()
+        reason = (
+            payload.reason.strip()
+            if payload and payload.reason and payload.reason.strip()
+            else f"Manual MT5 Close All ({resolved_market})"
+        )
+
+        q = db.query(Trade).filter(Trade.status == "OPEN")
+        if resolved_market in {"BYBIT", "FOREX"}:
+            q = q.filter(Trade.market == resolved_market)
+        open_trades = q.order_by(Trade.id.asc()).all()
+
+        closed_trades: list[dict[str, Any]] = []
+        for trade in open_trades:
+            mark_px = broker._prices.get(trade.symbol)
+            if mark_px is None or mark_px <= 0:
+                mark_px = trade.current_price if trade.current_price else trade.entry_price
+            closed = broker.close_position(
+                trade_id=trade.id,
+                reason=reason,
+                db=db,
+                order_exit_type="MARKET",
+                requested_exit_price=mark_px,
+            )
+            closed_trades.append(closed)
+
+        if closed_trades:
+            balances = broker.get_balance(db=db)
+            db.add(
+                EquitySnapshot(
+                    total_equity=balances["total_equity"],
+                    bybit_equity=balances["bybit_equity"],
+                    forex_equity=balances["forex_equity"],
+                )
+            )
+            db.commit()
+
+        return {
+            "status": "ok",
+            "market": resolved_market,
+            "closed_count": len(closed_trades),
+            "closed_trades": closed_trades,
+            "wallet": build_wallet_summary(db),
+        }
+
+    @fastapi_app.post("/api/positions/{position_id}/close", dependencies=[Depends(require_dashboard_auth)])
+    def close_single_position(
+        position_id: int,
+        db: Session = Depends(db_dependency),
+    ) -> dict[str, Any]:
+        """Close a single OPEN paper position at live mark price through the Realism Engine."""
+        _ensure_bot_state(db, broker)
+        trade = db.query(Trade).filter(Trade.id == position_id).first()
+        if trade is None:
+            raise HTTPException(status_code=404, detail=f"Position {position_id} not found.")
+        if trade.status == "CLOSED":
+            raise HTTPException(status_code=409, detail=f"Position {position_id} is already closed.")
+
+        mark_px = broker._prices.get(trade.symbol)
+        if mark_px is None or mark_px <= 0:
+            mark_px = trade.current_price if trade.current_price else trade.entry_price
+
+        closed = broker.close_position(
+            trade_id=trade.id,
+            reason="Manual MT5 Close from dashboard",
+            db=db,
+            order_exit_type="MARKET",
+            requested_exit_price=mark_px,
+        )
+        balances = broker.get_balance(db=db)
+        db.add(
+            EquitySnapshot(
+                total_equity=balances["total_equity"],
+                bybit_equity=balances["bybit_equity"],
+                forex_equity=balances["forex_equity"],
+            )
+        )
+        db.commit()
+
+        return {
+            "status": "ok",
+            "closed_trade": closed,
+            "wallet": build_wallet_summary(db),
+        }
 
     return fastapi_app
 

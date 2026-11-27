@@ -609,6 +609,20 @@ def classify_regime(
     )
 
 
+UNIFIED_REGIME_STRATEGIES: dict[RegimeState, tuple[str, ...]] = {
+    RegimeState.TRENDING_BULL: ("EMA_50_PULLBACK", "TREND_RIDER"),
+    RegimeState.TRENDING_BEAR: ("EMA_50_PULLBACK", "TREND_RIDER"),
+    RegimeState.BREAKOUT_EXPANSION: ("BREAKOUT_RETEST", "VOLATILITY_BREAKOUT"),
+    RegimeState.REVERSAL_EXHAUSTION: ("RSI_DIVERGENCE_SNIPER", "MEAN_REVERSION"),
+    RegimeState.DEAD_CHOP: (),
+}
+
+
+def get_unified_regime_strategies(state: RegimeState) -> list[str]:
+    """Return the unified eligible strategies for a given RegimeState (empty = Cash Mode)."""
+    return list(UNIFIED_REGIME_STRATEGIES.get(state, ()))
+
+
 class RegimeRouter:
     """Stateless wrapper around `classify_regime` for service-layer dependency injection."""
 
@@ -639,3 +653,8 @@ class RegimeRouter:
             pivot_right=self.pivot_right,
             divergence_recency_bars=self.divergence_recency_bars,
         )
+
+    @staticmethod
+    def get_eligible_strategies(decision: RegimeDecision) -> list[str]:
+        """Return all unified strategies eligible for the classified RegimeDecision."""
+        return get_unified_regime_strategies(decision.state)

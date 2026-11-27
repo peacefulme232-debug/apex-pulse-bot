@@ -24,14 +24,21 @@ from app.brokers.paper_sim import (
 from app.config import settings
 from app.database import SessionLocal
 from app.engine.confluence import ConfluenceFilter
+from app.engine.indicators import add_all_indicators
 from app.engine.recovery import reconcile_startup_state
+from app.engine.regime import MarketRegime, RegimeResult
 from app.engine.risk_manager import RiskManager
 from app.engine.session_guard import SessionGuard
-from app.engine.strategies import StrategyDispatcher
+from app.engine.strategies import (
+    MeanReversionStrategy,
+    StrategyDispatcher,
+    TrendRiderStrategy,
+    VolatilityBreakoutStrategy,
+)
 from app.models import ArmedRetestSetup, BotState, StrategyConfig, SystemLog, Trade, WalletAccount
 from app.services.confluence_evaluator import BrainConfig, ConfluenceEvaluator
 from app.services.notifier import TelegramNotifier
-from app.services.regime_router import RegimeRouter
+from app.services.regime_router import RegimeRouter, get_unified_regime_strategies
 from app.services.strategies import (
     BreakoutRetestStrategy,
     CandidateSignal,
@@ -84,6 +91,9 @@ class BotRunner:
         self.ema_pullback = EmaPullbackStrategy()
         self.breakout_retest = BreakoutRetestStrategy()
         self.rsi_divergence_sniper = RsiDivergenceSniperStrategy()
+        self.trend_rider = TrendRiderStrategy()
+        self.mean_reversion = MeanReversionStrategy()
+        self.volatility_breakout = VolatilityBreakoutStrategy()
         self.confluence_evaluator = ConfluenceEvaluator(
             config=self.brain_config,
             divergence_detector=self.rsi_divergence_sniper,
@@ -398,6 +408,201 @@ class BotRunner:
             h4_df = self.broker.get_ohlcv(symbol, interval="4h", limit=250)
         return h1_df, h4_df, d1_df
 
+    def _evaluate_legacy_as_candidate(
+        self,
+        *,
+        strategy_name: str,
+        symbol: str,
+        market_lower: str,
+        regime_decision: Any,
+        h1_candles: Any,
+    ) -> Optional[CandidateSignal]:
+        """Evaluate Trend Rider, Mean Reversion, or Volatility Breakout and adapt to CandidateSignal."""
+        if h1_candles is None or len(h1_candles) < 205:
+            return None
+        try:
+            enriched = add_all_indicators(h1_candles)
+        except Exception:
+            return None
+        if enriched is None or len(enriched) < 3:
+            return None
+
+        regime_map = {
+            "TREND_RIDER": MarketRegime.TRENDING,
+            "MEAN_REVERSION": MarketRegime.RANGING,
+            "VOLATILITY_BREAKOUT": MarketRegime.BREAKOUT_SQUEEZE,
+        }
+        target_regime = regime_map.get(strategy_name, MarketRegime.TRENDING)
+        last_closed = enriched.iloc[-2]
+        dummy_regime = RegimeResult(
+            regime=target_regime,
+            confidence=0.80,
+            adx=float(last_closed.get("adx", 25.0) or 25.0),
+            atr_pct=float(last_closed.get("atr_pct", 0.5) or 0.5),
+            bbw_percentile=float(last_closed.get("bbw_percentile", 50.0) or 50.0),
+            reason=regime_decision.reason,
+        )
+
+        if strategy_name == "TREND_RIDER":
+            sig = self.trend_rider.evaluate(enriched, dummy_regime)
+        elif strategy_name == "MEAN_REVERSION":
+            sig = self.mean_reversion.evaluate(enriched, dummy_regime)
+        elif strategy_name == "VOLATILITY_BREAKOUT":
+            sig = self.volatility_breakout.evaluate(enriched, dummy_regime)
+        else:
+            return None
+
+        if sig.action not in {"BUY", "SELL"}:
+            return None
+
+        side = "LONG" if sig.action == "BUY" else "SHORT"
+        if side == "LONG" and regime_decision.veto_longs:
+            return None
+        if side == "SHORT" and regime_decision.veto_shorts:
+            return None
+        if regime_decision.bias in {"LONG", "SHORT"} and side != regime_decision.bias:
+            return None
+
+        return CandidateSignal(
+            symbol=symbol,
+            market=market_lower,
+            strategy=strategy_name,
+            side=side,
+            entry_price=float(sig.entry_price),
+            sl_price=float(sig.stop_loss),
+            tp_price=float(sig.take_profit),
+            order_entry_type="MARKET",
+            reason=sig.reason,
+            metadata={"legacy_confidence": float(sig.confidence)},
+        )
+
+    def _collect_regime_candidates(
+        self,
+        *,
+        db: Session,
+        symbol: str,
+        market_lower: str,
+        regime_decision: Any,
+        h1_candles: Any,
+        h4_candles: Any,
+        d1_candles: Optional[Any],
+    ) -> list[CandidateSignal]:
+        """Collect all eligible, enabled candidates across the unified 6-strategy Regime Router."""
+        candidates: list[CandidateSignal] = []
+        seen_strategies: set[str] = set()
+
+        # Always advance an already-armed Breakout+Retest setup so it decrements/triggers/invalidates
+        if self.brain_config.is_strategy_enabled("BREAKOUT_RETEST"):
+            existing_armed = self.breakout_retest.get_armed_setup(
+                db, symbol=symbol, market=market_lower
+            )
+            if existing_armed is not None:
+                armed_cand = self.breakout_retest.evaluate(
+                    db=db,
+                    symbol=symbol,
+                    market=market_lower,
+                    candles=h1_candles,
+                )
+                seen_strategies.add("BREAKOUT_RETEST")
+                if armed_cand is not None:
+                    candidates.append(armed_cand)
+
+        eligible = get_unified_regime_strategies(regime_decision.state)
+        for strategy_name in eligible:
+            if strategy_name in seen_strategies or not self.brain_config.is_strategy_enabled(strategy_name):
+                continue
+            seen_strategies.add(strategy_name)
+            cand: Optional[CandidateSignal] = None
+            if strategy_name == "EMA_50_PULLBACK":
+                cand = self.ema_pullback.evaluate(
+                    symbol=symbol,
+                    market=market_lower,
+                    regime=regime_decision,
+                    h1_candles=h1_candles,
+                    h4_candles=h4_candles,
+                )
+            elif strategy_name == "BREAKOUT_RETEST":
+                cand = self.breakout_retest.evaluate(
+                    db=db,
+                    symbol=symbol,
+                    market=market_lower,
+                    candles=h1_candles,
+                )
+            elif strategy_name == "RSI_DIVERGENCE_SNIPER":
+                htf_source = d1_candles if d1_candles is not None else h4_candles
+                cand = self.rsi_divergence_sniper.evaluate_sniper_entry(
+                    candles_htf=htf_source,
+                    candles_exec=h1_candles,
+                    symbol=symbol,
+                    market=market_lower,
+                )
+            elif strategy_name in {"TREND_RIDER", "MEAN_REVERSION", "VOLATILITY_BREAKOUT"}:
+                cand = self._evaluate_legacy_as_candidate(
+                    strategy_name=strategy_name,
+                    symbol=symbol,
+                    market_lower=market_lower,
+                    regime_decision=regime_decision,
+                    h1_candles=h1_candles,
+                )
+            if cand is not None:
+                candidates.append(cand)
+
+        return candidates
+
+    def select_best_strategy_candidate(
+        self,
+        *,
+        candidates: list[CandidateSignal],
+        db: Session,
+        h1_candles: Any,
+        h4_candles: Any,
+        d1_candles: Optional[Any],
+        regime_decision: Any,
+        active_divergence: Any,
+    ) -> tuple[Optional[CandidateSignal], Optional[Any]]:
+        """Score all eligible candidates and auto-select the single highest-confluence winner.
+
+        Never returns multiple conflicting entries on the same symbol. If no candidate is
+        approved, logs the highest-scoring vetoed candidate once so the rejection audit log
+        records it cleanly and returns (best_vetoed_candidate, best_vetoed_eval).
+        """
+        if not candidates:
+            return None, None
+
+        scored: list[tuple[CandidateSignal, Any]] = []
+        for cand in candidates:
+            ev = self.confluence_evaluator.evaluate(
+                cand,
+                db=db,
+                h1_candles=h1_candles,
+                h4_candles=h4_candles,
+                d1_candles=d1_candles,
+                regime_decision=regime_decision,
+                active_divergence=active_divergence,
+                log_rejection=False,
+            )
+            scored.append((cand, ev))
+
+        approved = [(c, e) for c, e in scored if e.approved]
+        if approved:
+            approved.sort(key=lambda pair: (pair[1].total_score, pair[1].net_rr), reverse=True)
+            return approved[0]
+
+        # None passed: pick highest-scoring vetoed candidate and persist its rejection once
+        scored.sort(key=lambda pair: (pair[1].total_score, pair[1].net_rr), reverse=True)
+        best_cand, _ = scored[0]
+        logged_eval = self.confluence_evaluator.evaluate(
+            best_cand,
+            db=db,
+            h1_candles=h1_candles,
+            h4_candles=h4_candles,
+            d1_candles=d1_candles,
+            regime_decision=regime_decision,
+            active_divergence=active_divergence,
+            log_rejection=True,
+        )
+        return best_cand, logged_eval
+
     def _evaluate_brain_strategies(
         self,
         *,
@@ -409,54 +614,17 @@ class BotRunner:
         h4_candles: Any,
         d1_candles: Optional[Any],
     ) -> Optional[CandidateSignal]:
-        """Run allowed strategy for the classified regime (and advance any armed retest setup)."""
-        candidate: Optional[CandidateSignal] = None
-
-        # Always advance an already-armed Breakout+Retest setup so it decrements/triggers/invalidates
-        if self.brain_config.is_strategy_enabled("BREAKOUT_RETEST"):
-            existing_armed = self.breakout_retest.get_armed_setup(
-                db, symbol=symbol, market=market_lower
-            )
-            if existing_armed is not None:
-                candidate = self.breakout_retest.evaluate(
-                    db=db,
-                    symbol=symbol,
-                    market=market_lower,
-                    candles=h1_candles,
-                )
-                if candidate is not None:
-                    return candidate
-
-        for strategy_name in regime_decision.allowed_strategies:
-            if not self.brain_config.is_strategy_enabled(strategy_name):
-                continue
-            if strategy_name == "EMA_50_PULLBACK":
-                candidate = self.ema_pullback.evaluate(
-                    symbol=symbol,
-                    market=market_lower,
-                    regime=regime_decision,
-                    h1_candles=h1_candles,
-                    h4_candles=h4_candles,
-                )
-            elif strategy_name == "BREAKOUT_RETEST":
-                candidate = self.breakout_retest.evaluate(
-                    db=db,
-                    symbol=symbol,
-                    market=market_lower,
-                    candles=h1_candles,
-                )
-            elif strategy_name == "RSI_DIVERGENCE_SNIPER":
-                htf_source = d1_candles if d1_candles is not None else h4_candles
-                candidate = self.rsi_divergence_sniper.evaluate_sniper_entry(
-                    candles_htf=htf_source,
-                    candles_exec=h1_candles,
-                    symbol=symbol,
-                    market=market_lower,
-                )
-            if candidate is not None:
-                return candidate
-
-        return None
+        """Backwards-compatible helper returning the first eligible regime candidate."""
+        candidates = self._collect_regime_candidates(
+            db=db,
+            symbol=symbol,
+            market_lower=market_lower,
+            regime_decision=regime_decision,
+            h1_candles=h1_candles,
+            h4_candles=h4_candles,
+            d1_candles=d1_candles,
+        )
+        return candidates[0] if candidates else None
 
     def get_brain_telemetry(self, db: Session) -> dict[str, Any]:
         """Build live Strategy Brain telemetry for GET /api/brain/telemetry."""
@@ -538,11 +706,15 @@ class BotRunner:
             if value is not None and hasattr(self.brain_config, field_name):
                 setattr(self.brain_config, field_name, value)
 
-        # Keep matching StrategyConfig rows in sync if present
+        # Keep matching StrategyConfig rows in sync if present (all 6 unified strategies)
         strategy_flag_map = {
             "EMA_50_PULLBACK": self.brain_config.ema_50_pullback_enabled,
             "BREAKOUT_RETEST": self.brain_config.breakout_retest_enabled,
             "RSI_DIVERGENCE_SNIPER": self.brain_config.rsi_divergence_sniper_enabled,
+            "trend_rider": self.brain_config.trend_rider_enabled,
+            "range_mean_reversion": self.brain_config.mean_reversion_enabled,
+            "mean_reversion": self.brain_config.mean_reversion_enabled,
+            "volatility_breakout": self.brain_config.volatility_breakout_enabled,
         }
         for strat_name, enabled_flag in strategy_flag_map.items():
             row = db.query(StrategyConfig).filter(StrategyConfig.name == strat_name).first()
@@ -706,8 +878,12 @@ class BotRunner:
                 if active_div is None:
                     active_div = self.rsi_divergence_sniper.detect_active_divergence(h4_df)
 
-                # 2. Allowed Strategy evaluation
-                candidate = self._evaluate_brain_strategies(
+                # 2. Unified 6-Strategy Regime Router evaluation
+                eligible_strategies = [
+                    s for s in get_unified_regime_strategies(regime_decision.state)
+                    if self.brain_config.is_strategy_enabled(s)
+                ]
+                candidates = self._collect_regime_candidates(
                     db=db,
                     symbol=symbol,
                     market_lower=market_lower,
@@ -722,7 +898,9 @@ class BotRunner:
                     "market": market_lower,
                     "regime": regime_decision.state.value,
                     "bias": regime_decision.bias,
-                    "allowed_strategies": list(regime_decision.allowed_strategies),
+                    "allowed_strategies": list(eligible_strategies),
+                    "eligible_strategies": list(eligible_strategies),
+                    "selected_strategy": None,
                     "veto_longs": regime_decision.veto_longs,
                     "veto_shorts": regime_decision.veto_shorts,
                     "regime_reason": regime_decision.reason,
@@ -730,7 +908,7 @@ class BotRunner:
                     "confluence": None,
                 }
 
-                if candidate is None:
+                if not candidates:
                     self.brain_telemetry[symbol] = symbol_telemetry
                     continue
 
@@ -742,15 +920,15 @@ class BotRunner:
                             SystemLog(
                                 level="INFO",
                                 source="SessionGuard",
-                                message=f"{symbol} {candidate.side} paused ({sess.session_name}): {sess.reason}",
+                                message=f"{symbol} {candidates[0].side} paused ({sess.session_name}): {sess.reason}",
                             )
                         )
                         self.brain_telemetry[symbol] = symbol_telemetry
                         continue
 
-                # 3. 0-100 Confluence Evaluator + 6 Hard Veto Gates
-                eval_result = self.confluence_evaluator.evaluate(
-                    candidate,
+                # 3. 0-100 Confluence Evaluator + 6 Hard Veto Gates (auto-select highest-confluence winner)
+                candidate, eval_result = self.select_best_strategy_candidate(
+                    candidates=candidates,
                     db=db,
                     h1_candles=h1_df,
                     h4_candles=h4_df,
@@ -758,6 +936,11 @@ class BotRunner:
                     regime_decision=regime_decision,
                     active_divergence=active_div,
                 )
+                if candidate is None or eval_result is None:
+                    self.brain_telemetry[symbol] = symbol_telemetry
+                    continue
+
+                symbol_telemetry["selected_strategy"] = candidate.strategy if eval_result.approved else None
                 symbol_telemetry["confluence"] = eval_result.to_dict()
                 self.brain_telemetry[symbol] = symbol_telemetry
                 self.last_confluence = {

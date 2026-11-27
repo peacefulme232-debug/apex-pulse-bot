@@ -225,14 +225,16 @@ def test_e2e_smoke_endpoints_and_summarizer_brain_metrics(tmp_path: Path) -> Non
         assert ema_row["fees_paid_usd"] == 0.5
         assert ema_row["net_pnl_usd"] == 5.5
 
-        r_res = client.get("/api/wallet/rejections?limit=20")
+        r_res = client.get("/api/wallet/rejections?limit=50")
         assert r_res.status_code == 200
         r_items = r_res.json()["items"]
-        codes = {item["reason_code"]: item for item in r_items}
-        assert "BELOW_MIN_NOTIONAL" in codes
-        assert "FEE_DRAG_TOO_HIGH" in codes
-        assert codes["FEE_DRAG_TOO_HIGH"]["confluence_score"] == 62.0
-        assert codes["FEE_DRAG_TOO_HIGH"]["strategy"] == "EMA_50_PULLBACK"
+        assert any(item["reason_code"] == "BELOW_MIN_NOTIONAL" for item in r_items)
+        assert any(
+            item["reason_code"] == "FEE_DRAG_TOO_HIGH"
+            and item["confluence_score"] == 62.0
+            and item["strategy"] == "EMA_50_PULLBACK"
+            for item in r_items
+        )
 
         # 4. Walk-forward validation endpoint smoke test (mocked offline data)
         fake_df = _build_synthetic_h1_df(360)
