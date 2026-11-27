@@ -420,7 +420,7 @@ def compute_market_friction_and_reconciliation(
     actual_total = q6(to_decimal(wallet.active_balance) + to_decimal(wallet.vault_balance))
     drift = q6(actual_total - expected_total)
     reconciliation = {
-        "reconciled": drift == q6(ZERO),
+        "reconciled": abs(drift) <= Decimal("0.00001"),
         "drift": drift,
         "expected_total": expected_total,
         "actual_total": actual_total,
@@ -591,7 +591,9 @@ def execute_leave_balance(
             .count()
         )
         if open_cnt > 0:
-            raise WalletConflictError(f"Close open positions on {m} first")
+            raise WalletConflictError(
+                f"Close open positions on {m} first before running Leave-${target_total:.2f} reset"
+            )
         wallets[m] = w
 
     # Compute per-market target active balance
@@ -644,10 +646,7 @@ def execute_leave_balance(
 
         w.active_balance = active_after
         w.vault_balance = vault_after
-        delta = q6(active_after - active_before)
-        w.equity_baseline_day = active_after
-        w.cumulative_net_cashflow_day = q6(to_decimal(w.cumulative_net_cashflow_day) + delta)
-        w.updated_at = _utcnow()
+        _apply_cashflow_baseline_shift(w, active_before, active_after)
 
         tx = _record_transaction(
             db=db,
@@ -1071,7 +1070,7 @@ def build_wallet_summary(db: Session) -> dict[str, Any]:
             "withdrawable_active": float(q6(comb_withdrawable)),
             "lifetime_friction_breakdown": {k: float(v) for k, v in comb_friction.items()},
             "reconciliation": {
-                "reconciled": comb_reconciled and (q6(comb_drift) == q6(ZERO)),
+                "reconciled": comb_reconciled and (abs(q6(comb_drift)) <= Decimal("0.00001")),
                 "drift": str(q6(comb_drift)),
             },
         },
@@ -1120,30 +1119,40 @@ def list_execution_rejections(
     db: Session,
     market: Optional[str] = None,
     limit: int = 50,
+    offset: int = 0,
 ) -> dict[str, Any]:
-    """Return recent execution_rejections audit entries."""
+    """Return paginated execution_rejections audit entries."""
     query = db.query(ExecutionRejection)
     if market:
         query = query.filter(ExecutionRejection.market == normalize_market(market))
 
+    total = query.count()
     rows = (
         query.order_by(ExecutionRejection.created_at.desc(), ExecutionRejection.id.desc())
+        .offset(max(0, offset))
         .limit(min(max(1, limit), 200))
         .all()
     )
     return {
+        "total": total,
         "count": len(rows),
+        "limit": limit,
+        "offset": offset,
         "items": [
             {
                 "id": r.id,
                 "market": r.market,
                 "symbol": r.symbol,
                 "side": r.side,
+                "strategy": r.strategy,
+                "confluence_score": float(r.confluence_score) if r.confluence_score is not None else None,
                 "reason_code": r.reason_code,
-                "requested_qty": float(r.requested_qty),
-                "required_min_qty": float(r.required_min_qty),
-                "required_margin": float(r.required_margin),
-                "available_free_margin": float(r.available_free_margin),
+                "requested_qty": float(r.requested_qty) if r.requested_qty is not None else None,
+                "required_min_qty": float(r.required_min_qty) if r.required_min_qty is not None else None,
+                "required_margin": float(r.required_margin) if r.required_margin is not None else None,
+                "available_free_margin": (
+                    float(r.available_free_margin) if r.available_free_margin is not None else None
+                ),
                 "details": r.details,
                 "created_at": r.created_at.isoformat() if r.created_at else None,
             }

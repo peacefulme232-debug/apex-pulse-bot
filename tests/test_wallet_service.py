@@ -92,6 +92,10 @@ def test_20150_to_20_challenge_trc20_cashflow_isolation_and_reconciliation(tmp_p
         assert dash["bot_state"]["kill_switch_active"] is False
         assert "adjusted_pnl_usd" in dash["equity_curve"][0]
         assert "adjusted_equity" in dash["equity_curve"][0]
+        assert len(dash["adjusted_trading_pnl_curve"]) == len(dash["equity_curve"])
+        assert len(dash["raw_active_balance_curve"]) == len(dash["equity_curve"])
+        assert "value" in dash["adjusted_trading_pnl_curve"][0]
+        assert "value" in dash["raw_active_balance_curve"][0]
 
         # Run a BotRunner tick -> Daily Loss Lock MUST NOT trigger
         app.state.bot_runner.run_once()
@@ -114,10 +118,14 @@ def test_20150_to_20_challenge_trc20_cashflow_isolation_and_reconciliation(tmp_p
             assert sizing.available_free_margin == Decimal("20.000000")
             assert sizing.reason_code in {"BELOW_MIN_NOTIONAL", "INSUFFICIENT_MARGIN"}
 
-        # Rejections endpoint surfaces the logged rejection
-        rej_resp = client.get("/api/wallet/rejections?market=bybit")
+        # Rejections endpoint surfaces paginated logged rejections
+        rej_resp = client.get("/api/wallet/rejections?market=bybit&limit=10&offset=0")
         assert rej_resp.status_code == 200
-        assert rej_resp.json()["count"] >= 1
+        rej_body = rej_resp.json()
+        assert rej_body["count"] >= 1
+        assert rej_body["total"] >= 1
+        assert rej_body["limit"] == 10
+        assert rej_body["offset"] == 0
 
 
 # ---------------------------------------------------------------------------

@@ -397,6 +397,8 @@ def create_app(database_url: Optional[str] = None) -> FastAPI:
         wallet_txs = tx_q.all()
 
         equity_curve = []
+        adjusted_trading_pnl_curve = []
+        raw_active_balance_curve = []
         first_val = (
             (
                 snapshots[0].bybit_equity
@@ -426,16 +428,31 @@ def create_app(database_url: Optional[str] = None) -> FastAPI:
                     )
             adjusted_equity = round(float(to_decimal(val) - cum_cashflow), 2)
             adjusted_pnl_usd = round(adjusted_equity - round(first_val, 2), 2)
+            iso_ts = snap.timestamp.isoformat()
+            raw_val = round(val, 2)
 
             equity_curve.append(
                 {
-                    "timestamp": snap.timestamp.isoformat(),
+                    "timestamp": iso_ts,
                     "total_equity": round(snap.total_equity, 2),
                     "bybit_equity": round(snap.bybit_equity, 2),
                     "forex_equity": round(snap.forex_equity, 2),
-                    "value": round(val, 2),
+                    "value": raw_val,
                     "adjusted_equity": adjusted_equity,
                     "adjusted_pnl_usd": adjusted_pnl_usd,
+                }
+            )
+            adjusted_trading_pnl_curve.append(
+                {
+                    "timestamp": iso_ts,
+                    "value": adjusted_pnl_usd,
+                    "adjusted_equity": adjusted_equity,
+                }
+            )
+            raw_active_balance_curve.append(
+                {
+                    "timestamp": iso_ts,
+                    "value": raw_val,
                 }
             )
 
@@ -486,6 +503,8 @@ def create_app(database_url: Optional[str] = None) -> FastAPI:
                 "max_daily_loss_pct": settings.MAX_DAILY_LOSS_PCT,
             },
             "equity_curve": equity_curve,
+            "adjusted_trading_pnl_curve": adjusted_trading_pnl_curve,
+            "raw_active_balance_curve": raw_active_balance_curve,
             "strategies": strategy_payload,
             "open_positions": [broker._trade_to_dict(t) for t in open_positions],
             "closed_trades": [broker._trade_to_dict(t) for t in closed_trades],
@@ -846,12 +865,13 @@ def create_app(database_url: Optional[str] = None) -> FastAPI:
     def get_wallet_rejections(
         market: Optional[Literal["bybit", "forex"]] = Query(default=None),
         limit: int = Query(default=50, ge=1, le=200),
+        offset: int = Query(default=0, ge=0),
         db: Session = Depends(db_dependency),
     ) -> dict[str, Any]:
-        """Return recent execution_rejections audit rows."""
+        """Return paginated execution_rejections audit rows."""
         _ensure_bot_state(db, broker)
         try:
-            return list_execution_rejections(db=db, market=market, limit=limit)
+            return list_execution_rejections(db=db, market=market, limit=limit, offset=offset)
         except WalletError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
